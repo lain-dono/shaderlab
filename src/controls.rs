@@ -278,9 +278,9 @@ impl Program for Controls {
             Message::Save => {
                 let shader = crate::scene::Scene::wrap(&self.source);
                 std::thread::spawn(|| {
-                    use native_dialog::{FileDialog, MessageDialog, MessageType};
+                    use native_dialog::FileDialog;
                     let path = FileDialog::new()
-                        .set_filename("shader.wgsl")
+                        .set_filename("result.wgsl")
                         //.set_location("~/Desktop")
                         //.add_filter("PNG Image", &["png"])
                         //.add_filter("JPEG Image", &["jpg", "jpeg"])

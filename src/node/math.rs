@@ -89,7 +89,6 @@ macro_rules! math_op {
 
 // Advanced
 
-//math_fn!(Abs abs(a));
 math_fn!(Abs::abs(a));
 math_fn!(Exp::exp(a));
 math_fn!(Exp2::exp2(a));
