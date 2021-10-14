@@ -7,8 +7,7 @@ use crate::style::{self, FONT_SIZE};
 use crate::widget::pad;
 use iced_wgpu::Renderer;
 use iced_winit::{
-    Align, Column, Container, Element, HorizontalAlignment, Length, Point, Row, Rule, Space, Text,
-    VerticalAlignment,
+    alignment, Alignment, Column, Container, Element, Length, Point, Row, Rule, Space, Text,
 };
 
 slotmap::new_key_type! { pub struct NodeId; }
@@ -41,14 +40,23 @@ impl NodeWidget {
         Self {
             id,
             position,
-            inputs: node.inputs().iter().map(Port::new).collect(),
-            outputs: node.outputs().iter().map(Port::new).collect(),
+            inputs: node
+                .inputs()
+                .iter()
+                .map(|(name, ty)| Port::new(name, *ty))
+                .collect(),
+            outputs: node
+                .outputs()
+                .iter()
+                .map(|(name, ty)| Port::new(name, *ty))
+                .collect(),
             node,
             title_state: Default::default(),
             close: Default::default(),
             drag: Default::default(),
         }
     }
+
     pub fn label(&self) -> &str {
         self.node.label()
     }
@@ -59,8 +67,8 @@ impl NodeWidget {
         fn text_center(label: &str) -> Text<Renderer> {
             Text::new(label)
                 .size(FONT_SIZE)
-                .horizontal_alignment(HorizontalAlignment::Center)
-                .vertical_alignment(VerticalAlignment::Center)
+                .horizontal_alignment(alignment::Horizontal::Center)
+                .vertical_alignment(alignment::Vertical::Center)
         }
 
         fn grap_pad<'a>(
@@ -110,7 +118,7 @@ impl NodeWidget {
 
             Row::new()
                 .width(Length::Fill)
-                .align_items(Align::Center)
+                .align_items(Alignment::Center)
                 .push(drag)
                 .push(title)
                 .push(close)

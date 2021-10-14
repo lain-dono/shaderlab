@@ -2,16 +2,17 @@ use super::{Message, Pending};
 use crate::style::{FONT_SIZE, PORT_COLOR};
 use iced_graphics::backend::Text as _;
 use iced_native::{
+    alignment,
     event::{self, Event},
     layout, mouse, touch,
     {Clipboard, Color, Element, Hasher, Layout, Length, Point, Rectangle, Size},
-    {HorizontalAlignment, VerticalAlignment},
 };
 use iced_wgpu::{Defaults, Primitive, Renderer};
 use std::{cell::Cell, hash::Hash};
 
 pub struct Port {
     pub label: String,
+    pub ty: crate::node::Type,
     is_pressed: bool,
     slot: Cell<Point>,
 }
@@ -21,9 +22,10 @@ impl Port {
         self.slot.get()
     }
 
-    pub fn new(label: impl ToString) -> Self {
+    pub fn new(label: impl ToString, ty: crate::node::Type) -> Self {
         Self {
             label: label.to_string(),
+            ty,
             is_pressed: false,
             slot: Default::default(),
         }
@@ -183,11 +185,11 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
             color: defaults.text.color,
             font: Default::default(),
             horizontal_alignment: if self.is_input {
-                HorizontalAlignment::Left
+                alignment::Horizontal::Left
             } else {
-                HorizontalAlignment::Right
+                alignment::Horizontal::Right
             },
-            vertical_alignment: VerticalAlignment::Top,
+            vertical_alignment: alignment::Vertical::Top,
         };
 
         let primitives = vec![slot, label];

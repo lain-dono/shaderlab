@@ -1,6 +1,6 @@
 use iced_wgpu::Renderer;
 use iced_winit::{
-    button, scrollable, slider, {Align, Clipboard, Command, Element, HorizontalAlignment, Program},
+    alignment, button, scrollable, slider, {Alignment, Command, Element, Program},
     {Button, Column, Container, Row, Rule, Scrollable, Slider, Text},
     {Color, Length, Point, Rectangle},
 };
@@ -266,9 +266,8 @@ impl Controls {
 impl Program for Controls {
     type Renderer = Renderer;
     type Message = Message;
-    type Clipboard = Clipboard;
 
-    fn update(&mut self, message: Message, _clipboard: &mut Clipboard) -> Command<Message> {
+    fn update(&mut self, message: Message) -> Command<Message> {
         fn next_frame(message: Message) -> Command<Message> {
             Command::perform(iced_futures::futures::future::ready(message), |f| f)
         }
@@ -478,7 +477,7 @@ impl Program for Controls {
         Row::new()
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_items(Align::Start)
+            .align_items(Alignment::Start)
             .push(sidebar)
             .push(content)
             .into()
@@ -525,7 +524,7 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
             let text = Text::new(label)
                 .size(20)
                 .width(Length::Fill)
-                .horizontal_alignment(HorizontalAlignment::Center);
+                .horizontal_alignment(alignment::Horizontal::Center);
             self.push(text).divider()
         }
 
@@ -533,7 +532,7 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
             let text = Text::new(label)
                 .size(16)
                 .width(Length::Fill)
-                .horizontal_alignment(HorizontalAlignment::Left);
+                .horizontal_alignment(alignment::Horizontal::Left);
             let text = Container::new(text).padding([0, 0, 0, 16]);
             self.push(text)
         }
@@ -542,7 +541,7 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
             let text = Text::new(label)
                 .size(14)
                 .width(Length::Fill)
-                .horizontal_alignment(HorizontalAlignment::Left);
+                .horizontal_alignment(alignment::Horizontal::Left);
             let text = Container::new(text).padding([0, 0, 0, 16]);
             self.push(text)
         }
@@ -560,7 +559,7 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
             let row = labels.iter().fold(row, |row, &label| {
                 let text = Text::new(label)
                     .size(14)
-                    .horizontal_alignment(HorizontalAlignment::Left);
+                    .horizontal_alignment(alignment::Horizontal::Left);
                 row.push(PressPad::new(
                     text,
                     Message::AddNode(crate::node::math::Abs::boxed),
@@ -579,7 +578,7 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
             let row = items.iter().cloned().fold(row, |row, (label, create)| {
                 let text = Text::new(label)
                     .size(14)
-                    .horizontal_alignment(HorizontalAlignment::Left);
+                    .horizontal_alignment(alignment::Horizontal::Left);
                 row.push(PressPad::new(text, Message::AddNode(create)))
             });
 
@@ -638,53 +637,58 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
         //.item("Vector 3")
         //.item("Vector 4")
         /*
-        .subheader("Geometry")
-        .item("Bitangent Vector")
-        .item("Normal Vector")
-        .item("Position")
-        .item("Screen Position")
-        .item("Tangent Vector")
-        .item("UV")
-        .item("Vertex Color")
-        .item("View Direction")
-        .subheader("Gradient")
-        .item("Gradient")
-        .item("Sample Gradient")
-        .subheader("Matrix")
-        .item("Matrix 2x2")
-        .item("Matrix 3x3")
-        .item("Matrix 4x4")
-        .item("Transformation Matrix")
-        .subheader("PBR")
-        .item("Dielectric Specular")
-        .item("Metal Reflectance")
-        .subheader("Scene")
-        .item("Ambient")
-        .item("Camera")
-        .item("Fog")
-        .item("Object")
-        .item("Reflection Probe")
-        .item("Scene Color")
-        .item("Scene Depth")
-        .item("Screen")
-        .subheader("Texture")
-        .item("Cubemap Asset")
-        .item("Sample Cubemap")
-        .item("Sample Texture 2D")
-        .item("Sample Texture 2D Array")
-        .item("Sample Texture 2D LOD")
-        .item("Sample Texture 3D")
-        .item("Sampler State")
-        .item("Texel Size")
-        .item("Texture 2D Array Asset")
-        .item("Texture 2D Asset")
-        .item("Texture 3D Asset")
-        //
-        .header("Master")
-        .item("PBR Master")
-        .item("Unlit Master")
-        //
-        */
+                .subheader("Geometry")
+                .item("Bitangent Vector")
+                .item("Normal Vector")
+                .item("Position")
+                .item("Screen Position")
+                .item("Tangent Vector")
+                .item("UV")
+                .item("Vertex Color")
+                .item("View Direction")
+                .subheader("Gradient")
+                .item("Gradient")
+                .item("Sample Gradient")
+                .subheader("Matrix")
+                .item("Matrix 2x2")
+                .item("Matrix 3x3")
+                .item("Matrix 4x4")
+                .item("Transformation Matrix")
+                .subheader("PBR")
+                .item("Dielectric Specular")
+                .item("Metal Reflectance")
+                .subheader("Scene")
+                .item("Ambient")
+                .item("Camera")
+                .item("Fog")
+                .item("Object")
+                .item("Reflection Probe")
+                .item("Scene Color")
+                .item("Scene Depth")
+                .item("Screen")
+                .subheader("Texture")
+                .item("Cubemap Asset")
+                .item("Sample Cubemap")
+                .item("Sample Texture 2D")
+                .item("Sample Texture 2D Array")
+                .item("Sample Texture 2D LOD")
+                .item("Sample Texture 3D")
+                .item("Sampler State")
+                .item("Texel Size")
+                .item("Texture 2D Array Asset")
+                .item("Texture 2D Asset")
+                .item("Texture 3D Asset")
+                //
+                .header("Master")
+                .item("PBR Master")
+                .item("Unlit Master")
+                //
+                */
+        /*
+        Cos Cosh Acos
+        Sin Sinh Asin
+        Tan Tanh Atan Atan2
+         */
         .header("Math")
         .subheader("Basic")
         .rowx(&[
@@ -708,20 +712,20 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
         ])
         .subheader("Trigonometry")
         .rowx(&[
+            ("Cos", crate::node::math::Cos::boxed),
+            ("Cosh", crate::node::math::Cosh::boxed),
             ("Acos", crate::node::math::Acos::boxed),
+        ])
+        .rowx(&[
+            ("Sin", crate::node::math::Sin::boxed),
+            ("Sinh", crate::node::math::Sinh::boxed),
             ("Asin", crate::node::math::Asin::boxed),
+        ])
+        .rowx(&[
+            ("Tan", crate::node::math::Tan::boxed),
+            ("Tanh", crate::node::math::Tanh::boxed),
             ("Atan", crate::node::math::Atan::boxed),
             ("Atan2", crate::node::math::Atan2::boxed),
-        ])
-        .rowx(&[
-            ("Cos", crate::node::math::Cos::boxed),
-            ("Sin", crate::node::math::Sin::boxed),
-            ("Tan", crate::node::math::Tan::boxed),
-        ])
-        .rowx(&[
-            ("Cosh", crate::node::math::Cosh::boxed),
-            ("Sinh", crate::node::math::Sinh::boxed),
-            ("Tanh", crate::node::math::Tanh::boxed),
         ])
         .rowx(&[
             ("To Radians", crate::node::math::DegresToRadians::boxed),

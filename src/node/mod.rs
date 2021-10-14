@@ -3,27 +3,19 @@ pub mod math;
 
 use crate::controls::NodeId;
 
+pub use naga::{ScalarKind as Scalar, VectorSize};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
-    F32,
-    V2F,
-    V3F,
-    V4F,
+    Scalar(Scalar),
+    Vector(Scalar, VectorSize),
+    Matrix(Scalar, VectorSize, VectorSize),
 }
 
-impl std::fmt::Display for Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::F32 => "f32",
-                Self::V2F => "v2f",
-                Self::V3F => "v3f",
-                Self::V4F => "v4f",
-            }
-        )
-    }
+impl Type {
+    pub const V2F: Self = Self::Vector(Scalar::Float, VectorSize::Bi);
+    pub const V3F: Self = Self::Vector(Scalar::Float, VectorSize::Tri);
+    pub const V4F: Self = Self::Vector(Scalar::Float, VectorSize::Quad);
 }
 
 pub type Message = Box<dyn DynMessage>;
@@ -64,8 +56,8 @@ pub trait Node: std::fmt::Debug + 'static {
         150
     }
 
-    fn inputs(&self) -> &[&str];
-    fn outputs(&self) -> &[&str];
+    fn inputs(&self) -> &[(&str, Type)];
+    fn outputs(&self) -> &[(&str, Type)];
 
     fn update(&mut self, _node: NodeId, _message: Message) {}
 
@@ -99,10 +91,10 @@ impl Node for Return {
         80
     }
 
-    fn inputs(&self) -> &[&str] {
-        &["color"]
+    fn inputs(&self) -> &[(&str, Type)] {
+        &[("color", Type::V4F)]
     }
-    fn outputs(&self) -> &[&str] {
+    fn outputs(&self) -> &[(&str, Type)] {
         &[]
     }
 
@@ -123,11 +115,19 @@ impl Node for NodeDebug {
         "debug"
     }
 
-    fn inputs(&self) -> &[&str] {
-        &["A_in", "B_in", "C_in"]
+    fn inputs(&self) -> &[(&str, Type)] {
+        &[
+            ("A_in", Type::V4F),
+            ("B_in", Type::V4F),
+            ("C_in", Type::V4F),
+        ]
     }
-    fn outputs(&self) -> &[&str] {
-        &["A_out", "B_out", "C_out"]
+    fn outputs(&self) -> &[(&str, Type)] {
+        &[
+            ("A_out", Type::V4F),
+            ("B_out", Type::V4F),
+            ("C_out", Type::V4F),
+        ]
     }
 
     fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {

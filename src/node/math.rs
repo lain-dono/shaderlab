@@ -1,9 +1,41 @@
-use super::{GenError, Message, Node, NodeId, Type};
+use super::{GenError, Message, Node, NodeId};
 use iced_native::{widget::pick_list, Element, Length as IcedLength};
 use iced_wgpu::Renderer;
 
 #[derive(Debug, Clone)]
 struct ChangeType(Type);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Type {
+    F32,
+    V2F,
+    V3F,
+    V4F,
+}
+
+impl From<Type> for super::Type {
+    fn from(ty: Type) -> Self {
+        use super::{Scalar::Float, VectorSize};
+        match ty {
+            Type::F32 => Self::Scalar(Float),
+            Type::V2F => Self::Vector(Float, VectorSize::Bi),
+            Type::V3F => Self::Vector(Float, VectorSize::Tri),
+            Type::V4F => Self::Vector(Float, VectorSize::Quad),
+        }
+    }
+}
+
+impl ToString for Type {
+    fn to_string(&self) -> String {
+        match self {
+            Self::F32 => "f32",
+            Self::V2F => "v2f",
+            Self::V3F => "v3f",
+            Self::V4F => "v4f",
+        }
+        .to_string()
+    }
+}
 
 macro_rules! custom {
 
@@ -38,12 +70,12 @@ macro_rules! custom {
                 80
             }
 
-            fn inputs(&self) -> &[&str] {
-                &[$(stringify!($arg)),+]
+            fn inputs(&self) -> &[(&str, super::Type)] {
+                &[$((stringify!($arg), super::Type::V4F)),+]
             }
 
-            fn outputs(&self) -> &[&str] {
-                &[stringify!($ret)]
+            fn outputs(&self) -> &[(&str, super::Type)] {
+                &[(stringify!($ret), super::Type::V4F)]
             }
 
             fn generate(

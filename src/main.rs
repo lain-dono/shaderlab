@@ -5,7 +5,7 @@ use iced_native::futures::{
     task::{Context, Poll},
     Sink,
 };
-use iced_native::Runtime;
+use iced_native::{clipboard, command, window, Runtime};
 use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
 use iced_winit::{conversion, futures, program, winit, Clipboard, Debug, Size};
 use std::pin::Pin;
@@ -29,6 +29,7 @@ pub fn main() {
 
     // Initialize winit
     let event_loop: EventLoop<crate::controls::Message> = EventLoop::with_user_event();
+    let proxy = event_loop.create_proxy();
 
     let mut runtime = {
         let proxy = Proxy::new(event_loop.create_proxy());
@@ -53,7 +54,7 @@ pub fn main() {
     let mut clipboard = Clipboard::connect(&window);
 
     // Initialize wgpu
-    let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
+    let instance = wgpu::Instance::new(wgpu::Backends::PRIMARY);
     let surface = unsafe { instance.create_surface(&window) };
 
     let (device, queue) = futures::executor::block_on(async {
@@ -61,6 +62,7 @@ pub fn main() {
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
             })
             .await
             .expect("Request adapter");
@@ -80,20 +82,21 @@ pub fn main() {
 
     let format = wgpu::TextureFormat::Bgra8UnormSrgb;
 
-    let mut swap_chain = {
+    {
         let size = window.inner_size();
 
-        device.create_swap_chain(
-            &surface,
-            &wgpu::SwapChainDescriptor {
-                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+        surface.configure(
+            &device,
+            &wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format,
                 width: size.width,
                 height: size.height,
                 present_mode: wgpu::PresentMode::Mailbox,
             },
         )
-    };
+    }
+
     let mut resized = false;
 
     // Initialize staging belt and local pool
@@ -106,7 +109,7 @@ pub fn main() {
 
     // Initialize iced
     let mut debug = Debug::new();
-    let mut renderer = Renderer::new(Backend::new(&device, Settings::default()));
+    let mut renderer = Renderer::new(Backend::new(&device, Settings::default(), format));
 
     let mut state = program::State::new(
         controls,
@@ -164,7 +167,38 @@ pub fn main() {
                         &mut clipboard,
                         &mut debug,
                     ) {
-                        runtime.spawn(command);
+                        for action in command.actions() {
+                            match action {
+                                command::Action::Future(future) => runtime.spawn(future),
+
+                                command::Action::Clipboard(action) => match action {
+                                    clipboard::Action::Read(tag) => {
+                                        let message = tag(clipboard.read());
+
+                                        proxy
+                                            .send_event(message)
+                                            .expect("Send message to event loop");
+                                    }
+                                    clipboard::Action::Write(contents) => {
+                                        clipboard.write(contents);
+                                    }
+                                },
+                                command::Action::Window(action) => match action {
+                                    window::Action::Resize { width, height } => {
+                                        window.set_inner_size(winit::dpi::LogicalSize {
+                                            width,
+                                            height,
+                                        });
+                                    }
+                                    window::Action::Move { x, y } => {
+                                        window.set_outer_position(winit::dpi::LogicalPosition {
+                                            x,
+                                            y,
+                                        });
+                                    }
+                                },
+                            }
+                        }
                     }
 
                     // and request a redraw
@@ -175,10 +209,10 @@ pub fn main() {
                 if resized {
                     let size = window.inner_size();
 
-                    swap_chain = device.create_swap_chain(
-                        &surface,
-                        &wgpu::SwapChainDescriptor {
-                            usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+                    surface.configure(
+                        &device,
+                        &wgpu::SurfaceConfiguration {
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                             format,
                             width: size.width,
                             height: size.height,
@@ -189,7 +223,15 @@ pub fn main() {
                     resized = false;
                 }
 
-                let frame = swap_chain.get_current_frame().expect("Next frame");
+                let frame = if let Ok(frame) = surface.get_current_texture() {
+                    frame
+                } else {
+                    println!("redraw");
+                    window.request_redraw();
+                    return;
+                };
+
+                let target = frame.texture.create_view(&Default::default());
 
                 let mut encoder =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -199,7 +241,7 @@ pub fn main() {
                 {
                     // We clear the frame
                     let mut render_pass =
-                        scene.clear(&frame.output.view, &mut encoder, program.background_color());
+                        scene.clear(&target, &mut encoder, program.background_color());
 
                     // Draw the scene
                     scene.draw(
@@ -215,7 +257,7 @@ pub fn main() {
                     &device,
                     &mut staging_belt,
                     &mut encoder,
-                    &frame.output.view,
+                    &target,
                     &viewport,
                     state.primitive(),
                     &debug.overlay(),
@@ -224,6 +266,7 @@ pub fn main() {
                 // Then we submit the work
                 staging_belt.finish();
                 queue.submit(Some(encoder.finish()));
+                frame.present();
 
                 // Update the mouse cursor
                 window

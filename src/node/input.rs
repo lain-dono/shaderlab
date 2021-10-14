@@ -94,12 +94,12 @@ impl Node for Input {
         100
     }
 
-    fn inputs(&self) -> &[&str] {
+    fn inputs(&self) -> &[(&str, super::Type)] {
         &[]
     }
 
-    fn outputs(&self) -> &[&str] {
-        &["out"]
+    fn outputs(&self) -> &[(&str, super::Type)] {
+        &[("out", super::Type::V4F)]
     }
 
     fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {
@@ -161,12 +161,12 @@ impl Node for Color {
         100
     }
 
-    fn inputs(&self) -> &[&str] {
+    fn inputs(&self) -> &[(&str, super::Type)] {
         &[]
     }
 
-    fn outputs(&self) -> &[&str] {
-        &["out"]
+    fn outputs(&self) -> &[(&str, super::Type)] {
+        &[("out", super::Type::V4F)]
     }
 
     fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {
@@ -224,12 +224,12 @@ impl Node for Position {
         100
     }
 
-    fn inputs(&self) -> &[&str] {
+    fn inputs(&self) -> &[(&str, super::Type)] {
         &[]
     }
 
-    fn outputs(&self) -> &[&str] {
-        &["out"]
+    fn outputs(&self) -> &[(&str, super::Type)] {
+        &[("out", super::Type::V4F)]
     }
 
     fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {
