@@ -20,3 +20,5 @@ naga = { version = "0.7", features = ["wgsl-out"] }
 downcast-rs = "1.2"
 fnv = "1"
 native-dialog = "0.5.5"
+
+arrayvec = "0.7.1"

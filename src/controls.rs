@@ -6,10 +6,11 @@ use iced_winit::{
 };
 use slotmap::SlotMap;
 
-mod edge;
-mod node;
-mod port;
-mod workspace;
+pub mod edge;
+pub mod node;
+pub mod port;
+pub mod swizzle;
+pub mod workspace;
 
 pub use self::{
     edge::{Connection, Edge, Pending, PortId},
@@ -17,25 +18,6 @@ pub use self::{
     port::Port,
     workspace::Workspace,
 };
-
-#[derive(Default)]
-pub struct Controls {
-    source: String,
-    background_color: Color,
-    sliders: [slider::State; 3],
-
-    nodes: SlotMap<NodeId, NodeWidget>,
-    edges: Vec<Edge>,
-    workspace: workspace::State,
-    drag: Option<NodeId>,
-    drag_last: Point,
-
-    scrollable: scrollable::State,
-    _scroll_to_top: button::State,
-    _scroll_to_bottom: button::State,
-
-    save: button::State,
-}
 
 fn fix_name(s: &str) -> String {
     s.chars()
@@ -66,6 +48,29 @@ pub enum Message {
 
     Save,
     Todo,
+
+    SwizzleSelect(swizzle::Message),
+}
+
+#[derive(Default)]
+pub struct Controls {
+    source: String,
+    background_color: Color,
+    sliders: [slider::State; 3],
+
+    nodes: SlotMap<NodeId, NodeWidget>,
+    edges: Vec<Edge>,
+    workspace: workspace::State,
+    drag: Option<NodeId>,
+    drag_last: Point,
+
+    scrollable: scrollable::State,
+    _scroll_to_top: button::State,
+    _scroll_to_bottom: button::State,
+
+    save: button::State,
+
+    swizzle: swizzle::State,
 }
 
 impl Controls {
@@ -114,7 +119,12 @@ impl Controls {
     pub fn fix_node_position(&mut self, node: NodeId) {
         let base_offset = Point::ORIGIN - self.workspace.bounds().position();
 
-        let node = &self.nodes[node];
+        let node = if let Some(node) = self.nodes.get(node) {
+            node
+        } else {
+            log::warn!("can't find node: {:?}", node);
+            return;
+        };
 
         for (port, input) in node.inputs.iter().enumerate() {
             let position = input.slot();
@@ -409,6 +419,8 @@ impl Program for Controls {
                 self.drag = None;
             }
             Message::Check(_) => (),
+
+            Message::SwizzleSelect(message) => self.swizzle.update(message),
         }
 
         Command::none()
@@ -467,6 +479,7 @@ impl Program for Controls {
 
         let sidebar = Column::new()
             .push(sidebar)
+            .push(self.swizzle.view().map(Message::SwizzleSelect))
             .push(Button::new(&mut self.save, Text::new("save")).on_press(Message::Save));
 
         let sidebar = Container::new(sidebar)

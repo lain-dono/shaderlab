@@ -71,6 +71,13 @@ impl NodeWidget {
                 .vertical_alignment(alignment::Vertical::Center)
         }
 
+        fn text_left(label: &str) -> Text<Renderer> {
+            Text::new(label)
+                .size(FONT_SIZE)
+                .horizontal_alignment(alignment::Horizontal::Left)
+                .vertical_alignment(alignment::Vertical::Center)
+        }
+
         fn grap_pad<'a>(
             node: NodeId,
             state: &'a mut pad::State,
@@ -105,11 +112,10 @@ impl NodeWidget {
         }
 
         let title = {
-            let drag = text_center("=").size(16).width(Length::Units(FONT_SIZE));
-            let drag = grap_pad(self.id, &mut self.drag, drag);
-
-            let title = text_center(self.node.label()).width(Length::Fill);
-            let title = grap_pad(self.id, &mut self.title_state, title).width(Length::Fill);
+            let title = text_left(self.node.label()).width(Length::Fill);
+            let title = grap_pad(self.id, &mut self.title_state, title)
+                .width(Length::Fill)
+                .padding([0, 4]);
 
             let close = text_center("×").size(16).width(Length::Units(FONT_SIZE));
             let close = pad::Pad::new(&mut self.close, close)
@@ -119,7 +125,6 @@ impl NodeWidget {
             Row::new()
                 .width(Length::Fill)
                 .align_items(Alignment::Center)
-                .push(drag)
                 .push(title)
                 .push(close)
         };

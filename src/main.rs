@@ -15,6 +15,7 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
 };
 
+pub mod builder;
 pub mod controls;
 pub mod graph;
 pub mod node;
@@ -26,6 +27,9 @@ use crate::{controls::Controls, scene::Scene};
 
 pub fn main() {
     env_logger::init();
+
+    builder::example_naga();
+    //return;
 
     // Initialize winit
     let event_loop: EventLoop<crate::controls::Message> = EventLoop::with_user_event();

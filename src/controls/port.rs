@@ -178,7 +178,7 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
                 } else {
                     bounds.x + bounds.width - bounds.height
                 },
-                y: bounds.y,
+                y: bounds.y - 1.0,
                 width: bounds.width - bounds.height,
                 height: bounds.height,
             },
