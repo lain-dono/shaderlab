@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Graph<Key: Copy + Eq + std::hash::Hash> {
     adjacenty_list: HashMap<Key, HashSet<Key>>,
 }

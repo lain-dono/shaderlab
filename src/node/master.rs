@@ -1,30 +1,116 @@
-use super::{types, GenError, Message, Node, NodeId, Type};
+use super::{Node, NodeDescriptor, Type};
+use crate::builder::{FunctionBuilder, ModuleBuilder, NodeBuilder, F32_4, U32};
+use crate::controls::edge::{Edge, Output, PortId};
+use naga::{
+    Binding, BuiltIn, EntryPoint, Expression, Handle, Interpolation, Sampling, ShaderStage,
+    Statement,
+};
 
-#[derive(Clone, Default, Debug)]
-pub struct MasterNode;
+#[derive(Debug, Default)]
+pub struct Master {
+    pub position: Option<Output>,
+    pub color: Option<Output>,
+}
 
-impl Node for MasterNode {
-    fn label(&self) -> &str {
-        "master"
+impl NodeBuilder for Master {
+    fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>> {
+        None
+    }
+}
+
+impl Master {
+    pub fn entry<'nodes>(&self, nodes: &'nodes dyn NodeBuilder) -> Option<ModuleBuilder<'nodes>> {
+        let mut module = ModuleBuilder::new(nodes);
+
+        let vs_main = self.vertex_entry(nodes, &mut module)?;
+        let fs_main = self.fragement_entry(nodes, &mut module)?;
+
+        module.push_entry_point(vs_main);
+        module.push_entry_point(fs_main);
+
+        Some(module)
     }
 
-    fn width(&self) -> u16 {
-        100
+    pub fn vertex_entry(
+        &self,
+        nodes: &dyn NodeBuilder,
+        module: &mut ModuleBuilder,
+    ) -> Option<EntryPoint> {
+        let mut function = module.function();
+        function.set_result(F32_4, Binding::BuiltIn(BuiltIn::Position));
+        function.push_argument(
+            String::from("vertex_index"),
+            U32,
+            Binding::BuiltIn(BuiltIn::VertexIndex),
+        );
+
+        let value = Some(nodes.expr(&mut function, self.position?)?);
+        function.push_statement(Statement::Return { value });
+
+        Some(EntryPoint {
+            name: String::from("vs_main"),
+            stage: ShaderStage::Vertex,
+            early_depth_test: None,
+            workgroup_size: [0; 3],
+            function: function.build(),
+        })
     }
 
-    fn inputs(&self) -> &[(&str, Type)] {
-        &[("color", super::types::VEC_F32_4)]
+    pub fn fragement_entry(
+        &self,
+        nodes: &dyn NodeBuilder,
+        module: &mut ModuleBuilder,
+    ) -> Option<EntryPoint> {
+        let mut function = module.function();
+        function.set_result(
+            F32_4,
+            Binding::Location {
+                location: 0,
+                interpolation: Some(Interpolation::Perspective),
+                sampling: Some(Sampling::Center),
+            },
+        );
+
+        let value = Some(nodes.expr(&mut function, self.color?)?);
+        function.push_statement(Statement::Return { value });
+
+        Some(EntryPoint {
+            name: String::from("fs_main"),
+            stage: ShaderStage::Fragment,
+            early_depth_test: None,
+            workgroup_size: [0; 3],
+            function: function.build(),
+        })
+    }
+}
+
+impl Node for Master {
+    fn desc(&self) -> NodeDescriptor {
+        NodeDescriptor {
+            label: "master",
+            width: 80,
+            inputs: &[("position", Type::V4F), ("color", Type::V4F)],
+            outputs: &[],
+        }
     }
 
-    fn outputs(&self) -> &[(&str, Type)] {
-        &[]
+    fn add_edge(&mut self, edge: Edge, is_input: bool) {
+        assert!(is_input);
+        if edge.input().port == PortId(0) {
+            self.position = Some(edge.output())
+        }
+        if edge.input().port == PortId(1) {
+            self.color = Some(edge.output())
+        }
     }
 
-    fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {
-        if let ([Some(a)], []) = (inputs, outputs) {
-            Ok(format!("return {};", a))
-        } else {
-            Err(GenError)
+    fn remove_edge(&mut self, edge: Edge, is_input: bool) {
+        assert!(is_input);
+        if edge.input().port == PortId(0) {
+            self.position = None
+        }
+        if edge.input().port == PortId(1) {
+            self.color = None
         }
     }
 }

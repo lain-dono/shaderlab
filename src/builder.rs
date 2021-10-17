@@ -1,13 +1,37 @@
+use crate::controls::edge::{Output, PortId};
+use crate::node::NodeId;
 use naga::{
-    BinaryOperator, Binding, Constant, ConstantInner, EntryPoint, Expression, Function,
-    FunctionArgument, FunctionResult, GlobalVariable, Handle, LocalVariable, Module, ScalarKind,
-    ScalarValue, Span, Statement, Type, TypeInner, VectorSize,
+    Binding, Constant, EntryPoint, Expression, Function, FunctionArgument, FunctionResult,
+    GlobalVariable, Handle, LocalVariable, Module, ScalarKind, Span, Statement, Type, TypeInner,
+    VectorSize,
 };
 
 pub mod expr;
 pub mod extract;
 pub mod merge;
-pub mod node;
+
+pub trait NodeBuilder {
+    fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>>;
+}
+
+pub trait AnyNode: downcast_rs::Downcast + NodeBuilder {}
+downcast_rs::impl_downcast!(AnyNode);
+
+impl<T: downcast_rs::Downcast + NodeBuilder> AnyNode for T {}
+
+pub type Node = Box<dyn AnyNode>;
+
+impl NodeBuilder for slotmap::SlotMap<NodeId, Node> {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        self[output.node].expr(function, output)
+    }
+}
+
+impl NodeBuilder for slotmap::SlotMap<NodeId, crate::controls::NodeWidget> {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        self[output.node].node.expr(function, output)
+    }
+}
 
 pub const U32: Type = Type {
     name: None,
@@ -60,15 +84,33 @@ pub const F32_4: Type = Type {
     },
 };
 
-#[derive(Default)]
-pub struct ModuleBuilder {
+pub struct ModuleBuilder<'nodes> {
+    nodes: &'nodes dyn NodeBuilder,
     module: Module,
 }
 
-impl ModuleBuilder {
-    pub fn from_wgsl(source: &str) -> Result<Self, naga::front::wgsl::ParseError> {
+impl<'nodes> ModuleBuilder<'nodes> {
+    pub fn new(nodes: &'nodes dyn NodeBuilder) -> Self {
+        let module = Module::default();
+        Self { nodes, module }
+    }
+
+    pub fn from_wgsl(
+        nodes: &'nodes dyn NodeBuilder,
+        source: &str,
+    ) -> Result<Self, naga::front::wgsl::ParseError> {
         let module = naga::front::wgsl::parse_str(source)?;
-        Ok(Self { module })
+        Ok(Self { nodes, module })
+    }
+
+    pub fn merge_str(&mut self, source: &str) -> Result<(), naga::front::wgsl::ParseError> {
+        let src = naga::front::wgsl::parse_str(source)?;
+        self::merge::merge_module(&mut self.module, &src);
+        Ok(())
+    }
+
+    pub fn module(&self) -> &Module {
+        &self.module
     }
 
     pub fn build(&self) -> String {
@@ -98,35 +140,33 @@ impl ModuleBuilder {
         self.module.entry_points.push(entry)
     }
 
-    pub fn function(&mut self) -> FunctionBuilder {
+    pub fn function(&mut self) -> FunctionBuilder<'_, 'nodes> {
         FunctionBuilder {
             module: self,
             function: Function::default(),
         }
     }
-
-    pub fn merge_str(&mut self, source: &str) -> Result<(), naga::front::wgsl::ParseError> {
-        let src = naga::front::wgsl::parse_str(source)?;
-        self::merge::merge_module(&mut self.module, &src);
-        Ok(())
-    }
 }
 
-pub struct FunctionBuilder<'a> {
-    module: &'a mut ModuleBuilder,
+pub struct FunctionBuilder<'a, 'nodes> {
+    module: &'a mut ModuleBuilder<'nodes>,
     function: Function,
 }
 
-impl<'a> FunctionBuilder<'a> {
+impl<'a, 'nodes> FunctionBuilder<'a, 'nodes> {
+    pub fn node(&mut self, port: Output) -> Option<Handle<Expression>> {
+        self.module.nodes.expr(self, port)
+    }
+
     pub fn build(self) -> Function {
         self.function
     }
 
-    pub fn module(&mut self) -> &mut ModuleBuilder {
+    pub fn module(&mut self) -> &mut ModuleBuilder<'nodes> {
         self.module
     }
 
-    pub fn inner(&mut self) -> &mut Function {
+    pub fn function(&mut self) -> &mut Function {
         &mut self.function
     }
 
@@ -172,9 +212,7 @@ impl<'a> FunctionBuilder<'a> {
     pub fn insert_expression_name(&mut self, expr: Handle<Expression>, name: impl Into<String>) {
         self.function.named_expressions.insert(expr, name.into());
     }
-}
 
-impl<'a> FunctionBuilder<'a> {
     pub fn emit(&mut self, expr: Expression) -> Handle<Expression> {
         let old_len = self.function.expressions.len();
         let expr = self.append_expression(expr);
@@ -182,86 +220,38 @@ impl<'a> FunctionBuilder<'a> {
         self.function.body.push(end, Span::default());
         expr
     }
-
-    pub fn argument(&mut self, index: u32) -> Handle<Expression> {
-        self.append_expression(Expression::FunctionArgument(index))
-    }
-
-    pub fn uint(&mut self, value: u64) -> Handle<Expression> {
-        self.scalar(ScalarValue::Uint(value))
-    }
-
-    pub fn sint(&mut self, value: i64) -> Handle<Expression> {
-        self.scalar(ScalarValue::Sint(value))
-    }
-
-    pub fn float(&mut self, value: f64) -> Handle<Expression> {
-        self.scalar(ScalarValue::Float(value))
-    }
-
-    fn scalar(&mut self, value: ScalarValue) -> Handle<Expression> {
-        let expr = Expression::Constant(self.module.append_constant(Constant {
-            name: None,
-            specialization: None,
-            inner: ConstantInner::Scalar { width: 4, value },
-        }));
-        self.append_expression(expr)
-    }
-
-    pub fn as_float(&mut self, expr: Handle<Expression>) -> Handle<Expression> {
-        self.cast(expr, ScalarKind::Float)
-    }
-
-    pub fn as_sint(&mut self, expr: Handle<Expression>) -> Handle<Expression> {
-        self.cast(expr, ScalarKind::Sint)
-    }
-
-    pub fn as_uint(&mut self, expr: Handle<Expression>) -> Handle<Expression> {
-        self.cast(expr, ScalarKind::Uint)
-    }
-
-    fn cast(&mut self, expr: Handle<Expression>, kind: ScalarKind) -> Handle<Expression> {
-        let convert = Some(4);
-        self.emit(Expression::As {
-            expr,
-            kind,
-            convert,
-        })
-    }
-
-    pub fn bin(
-        &mut self,
-        left: Handle<Expression>,
-        op: BinaryOperator,
-        right: Handle<Expression>,
-    ) -> Handle<Expression> {
-        self.emit(Expression::Binary { op, left, right })
-    }
 }
 
 pub fn example_naga() {
-    let mut nodes = node::NodeArena::default();
-    let triangle = nodes.push(node::input::Triangle);
-    let color = nodes.push(node::input::Vec4::new([0.1, 0.2, 0.3, 0.4]));
+    let mut nodes: slotmap::SlotMap<crate::node::NodeId, Node> = slotmap::SlotMap::default();
 
-    let _master = nodes.push(node::master::Master {
-        position: Some((triangle, 0)),
-        color: Some((color, 0)),
-    });
+    let triangle = nodes.insert(Box::new(crate::node::input::Triangle));
+    let color = nodes.insert(Box::new(crate::node::input::Vec4 {
+        value: [0.1, 0.2, 0.3, 0.4],
+    }));
 
-    for (_, node) in nodes.inner.iter() {
-        let master: Option<&node::master::Master> = node.downcast_ref();
+    let _master = nodes.insert(Box::new(crate::node::master::Master {
+        position: Some(Output {
+            node: triangle,
+            port: PortId(0),
+        }),
+        color: Some(Output {
+            node: color,
+            port: PortId(0),
+        }),
+    }));
+
+    for (_, node) in nodes.iter() {
+        let master: Option<&crate::node::master::Master> = node.downcast_ref();
         if let Some(master) = master {
-            let mut builder = ModuleBuilder::default();
-            master.entry(&nodes, &mut builder);
-
-            println!("{:#?}", builder.module);
-            let source = builder.build();
-            println!("{}", source);
+            if let Some(builder) = master.entry(&nodes) {
+                println!("{:#?}", builder.module);
+                println!("{}", builder.build());
+            }
         }
     }
 
-    {
+    if false {
         let source = r#"
         fn lol() {
             let a = vec4<f32>(1.0);
@@ -269,7 +259,7 @@ pub fn example_naga() {
             let c = a.w;
         }
         "#;
-        let module = ModuleBuilder::from_wgsl(source).unwrap();
+        let module = ModuleBuilder::from_wgsl(&nodes, source).unwrap();
         println!("{:#?}", module.module);
         println!("{}", module.build());
     }

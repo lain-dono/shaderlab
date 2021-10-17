@@ -13,32 +13,18 @@ pub mod swizzle;
 pub mod workspace;
 
 pub use self::{
-    edge::{Connection, Edge, Pending, PortId},
-    node::{NodeId, NodeWidget},
+    edge::{Edge, Pending, PortId},
+    node::NodeWidget,
     port::Port,
     workspace::Workspace,
 };
-
-fn fix_name(s: &str) -> String {
-    s.chars()
-        .map(|c| if !c.is_ascii_alphanumeric() { '_' } else { c })
-        .collect()
-}
+use crate::node::NodeId;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Background(Color),
-    Check(bool),
-    StartBezier(Pending),
-    CancelBezier,
-
-    NodeInternal(NodeId, Box<dyn crate::node::DynMessage>),
-
     AddNode(fn() -> Box<dyn crate::node::Node>),
-    RemoveNode(NodeId),
-    StartDrag(NodeId),
-    EndDrag(NodeId),
-    Move(Point),
+    Workspace(node::Message),
 
     Fix(NodeId),
 
@@ -47,8 +33,6 @@ pub enum Message {
     Scrolled(f32),
 
     Save,
-    Todo,
-
     SwizzleSelect(swizzle::Message),
 }
 
@@ -58,18 +42,12 @@ pub struct Controls {
     background_color: Color,
     sliders: [slider::State; 3],
 
-    nodes: SlotMap<NodeId, NodeWidget>,
-    edges: Vec<Edge>,
     workspace: workspace::State,
     drag: Option<NodeId>,
     drag_last: Point,
 
     scrollable: scrollable::State,
-    _scroll_to_top: button::State,
-    _scroll_to_bottom: button::State,
-
     save: button::State,
-
     swizzle: swizzle::State,
 }
 
@@ -78,18 +56,23 @@ impl Controls {
         Self {
             source: "    return vec4<f32>(0.02, 0.02, 0.02, 1.0);\n".to_string(),
             background_color: Color::BLACK,
-            nodes: {
-                let dbg = Box::new(crate::node::NodeDebug);
+            workspace: workspace::State::with_nodes({
+                use crate::node::BoxedNode;
+
+                let color_a = crate::node::input::Color::boxed();
+                let color_b = crate::node::input::Color::boxed();
+                let triangle = crate::node::input::Triangle::boxed();
                 let add = crate::node::math::Add::boxed();
-                let ret = Box::new(crate::node::Return);
+                let master = crate::node::master::Master::boxed();
 
                 let mut nodes = SlotMap::with_key();
-                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(50.0, 100.0), dbg));
-                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(300.0, 100.0), add));
-                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(500.0, 100.0), ret));
+                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(50.0, 100.0), color_a));
+                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(50.0, 300.0), color_b));
+                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(300.0, 100.0), triangle));
+                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(300.0, 300.0), add));
+                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(500.0, 100.0), master));
                 nodes
-            },
-            edges: vec![],
+            }),
             drag: None,
             drag_last: Point::ORIGIN,
             ..Default::default()
@@ -106,171 +89,6 @@ impl Controls {
     pub fn source(&self) -> &str {
         &self.source
     }
-
-    fn check_add(&self, edge: Edge) -> bool {
-        let mut graph = crate::graph::Graph::default();
-        for edge in &self.edges {
-            graph.add_edge(edge.output.node, edge.input.node);
-        }
-        graph.add_edge(edge.output.node, edge.input.node);
-        !graph.is_reachable(edge.input.node, edge.output.node)
-    }
-
-    pub fn fix_node_position(&mut self, node: NodeId) {
-        let base_offset = Point::ORIGIN - self.workspace.bounds().position();
-
-        let node = if let Some(node) = self.nodes.get(node) {
-            node
-        } else {
-            log::warn!("can't find node: {:?}", node);
-            return;
-        };
-
-        for (port, input) in node.inputs.iter().enumerate() {
-            let position = input.slot();
-            for edge in &mut self.edges {
-                if edge.input.node == node.id && edge.input.port == PortId(port) {
-                    edge.input.position = position + base_offset;
-                }
-            }
-        }
-
-        for (port, output) in node.outputs.iter().enumerate() {
-            let position = output.slot();
-            for edge in &mut self.edges {
-                if edge.output.node == node.id && edge.output.port == PortId(port) {
-                    edge.output.position = position + base_offset;
-                }
-            }
-        }
-
-        self.workspace.request_redraw();
-    }
-
-    fn try_traverse(&mut self) {
-        use colored::Colorize as _;
-
-        log::info!("try_traverse");
-
-        let start = self.nodes.values().find_map(|node| {
-            if node.label() == "return" {
-                Some(node.id)
-            } else {
-                None
-            }
-        });
-
-        struct Label {
-            node: (NodeId, String),
-            port: (PortId, String),
-        }
-
-        impl ToString for Label {
-            fn to_string(&self) -> String {
-                format!(
-                    "{}_{}_{}_{}",
-                    fix_name(&self.node.1),
-                    self.port.1,
-                    self.node.0.to_string(),
-                    self.port.0 .0,
-                )
-            }
-        }
-
-        if let Some(start) = start {
-            let mut graph = crate::graph::Graph::default();
-            for edge in &self.edges {
-                graph.add_edge(edge.input.node, edge.output.node);
-            }
-
-            let mut code = Vec::new();
-
-            let result = graph.dfs(start, |id| -> Result<(), crate::node::GenError> {
-                let node = &self.nodes[id];
-
-                let inputs: Vec<_> = node
-                    .inputs
-                    .iter()
-                    .enumerate()
-                    .map(|(input_port, _)| {
-                        let output = self.edges.iter().find_map(|e| {
-                            if e.input.node == node.id && e.input.port == PortId(input_port) {
-                                Some(e.output)
-                            } else {
-                                None
-                            }
-                        });
-
-                        output.map(|output| {
-                            let node = &self.nodes[output.node];
-                            Label {
-                                node: (node.id, node.label().to_string()),
-                                port: (output.port, node.outputs[output.port.0].label.clone()),
-                            }
-                            .to_string()
-                        })
-                    })
-                    .collect();
-
-                let outputs: Vec<_> = node
-                    .outputs
-                    .iter()
-                    .enumerate()
-                    .map(|(port, output)| {
-                        Label {
-                            node: (node.id, node.label().to_string()),
-                            port: (PortId(port), output.label.clone()),
-                        }
-                        .to_string()
-                    })
-                    .collect();
-
-                let deps: std::collections::HashSet<NodeId> = self
-                    .edges
-                    .iter()
-                    .filter(|edge| edge.input.node == id)
-                    .map(|edge| edge.output.node)
-                    .collect();
-
-                node.node
-                    .generate(&inputs, &outputs)
-                    .map(|gen| code.push((node.id, gen, deps)))
-            });
-
-            match result {
-                Ok(()) => {
-                    code.reverse();
-
-                    // dfs sucks
-                    code.sort_by(|(a, _, a_deps), (b, _, b_deps)| {
-                        if a_deps.contains(b) {
-                            std::cmp::Ordering::Greater
-                        } else if b_deps.contains(a) {
-                            std::cmp::Ordering::Less
-                        } else {
-                            std::cmp::Ordering::Equal
-                        }
-                    });
-
-                    let mut source = String::new();
-
-                    for (_node, op, _) in &code {
-                        use std::fmt::Write;
-                        writeln!(&mut source, "  {}", op).unwrap();
-                    }
-                    //println!("{{");
-                    //println!("{}", source);
-                    //println!("}}");
-                    self.source = source;
-                }
-                Err(err) => {
-                    log::warn!("wtf: {}", format!("{:?}", err).red())
-                }
-            }
-        } else {
-            log::warn!("no start node");
-        }
-    }
 }
 
 impl Program for Controls {
@@ -282,7 +100,6 @@ impl Program for Controls {
             Command::perform(iced_futures::futures::future::ready(message), |f| f)
         }
 
-        let base_offset = Point::ORIGIN - self.workspace.bounds().position();
         match message {
             Message::Save => {
                 let shader = crate::scene::Scene::wrap(&self.source);
@@ -316,33 +133,51 @@ impl Program for Controls {
                     }
                 });
             }
-            Message::Fix(node) => self.fix_node_position(node),
+            Message::Fix(node) => self.workspace.fix_node_position(node),
+            Message::Background(color) => self.background_color = color,
 
-            Message::NodeInternal(node, message) => {
-                self.nodes[node].node.update(node, message);
+            Message::AddNode(node) => self.workspace.add_node(node()),
+            Message::Workspace(message) => match message {
+                node::Message::Remove(node) => self.workspace.remove_node(node),
+                node::Message::Dynamic(node, message) => {
+                    self.workspace.update_node(node, message);
+                    if let Some(source) = self.workspace.try_traverse() {
+                        self.source = source;
+                    }
+                }
+                node::Message::DragStart(node) => {
+                    log::info!("start drag");
+                    self.drag = Some(node);
+                    self.workspace.fix_node_position(node);
+                }
+                node::Message::DragMove(position) => {
+                    let delta = position - self.drag_last;
+                    self.drag_last = position;
+                    if let Some(id) = self.drag {
+                        self.workspace.move_node(id, delta);
+                        return next_frame(Message::Fix(id));
+                    }
+                }
+                node::Message::DragEnd(node) => {
+                    log::info!("end drag");
+                    self.drag = None;
+                    self.workspace.fix_node_position(node);
+                    return next_frame(Message::Fix(node));
+                }
+                node::Message::StartEdge(from) => {
+                    self.workspace.start_edge(from);
+                    if let Some(source) = self.workspace.try_traverse() {
+                        self.source = source;
+                    }
+                }
+                node::Message::CancelEdge => {
+                    log::info!("cancel edge creation");
+                    self.workspace.end();
+                    self.workspace.request_redraw();
+                    self.drag = None;
+                }
+            },
 
-                self.try_traverse();
-            }
-
-            Message::AddNode(node) => {
-                let node = node();
-                log::info!("add node {:?}", node);
-
-                let bounds = self.workspace.bounds();
-                let position = Point::ORIGIN + (bounds.center() - bounds.position());
-
-                self.nodes
-                    .insert_with_key(|id| NodeWidget::new(id, position, node));
-            }
-
-            Message::RemoveNode(node) => {
-                self.nodes.remove(node);
-                self.edges
-                    .retain(|edge| edge.input.node != node && edge.output.node != node);
-
-                self.workspace.request_redraw();
-            }
-            Message::Todo => (),
             Message::ScrollToTop => {
                 self.scrollable.snap_to(0.0);
                 //.latest_offset = 0.0;
@@ -354,71 +189,6 @@ impl Program for Controls {
             Message::Scrolled(_offset) => {
                 //self.scrollable.latest_offset = offset;
             }
-
-            Message::StartDrag(node) => {
-                log::info!("start drag");
-                self.drag = Some(node);
-                self.fix_node_position(node);
-            }
-            Message::Move(position) => {
-                let delta = position - self.drag_last;
-                self.drag_last = position;
-                if let Some(id) = self.drag {
-                    let node = &mut self.nodes[id];
-                    node.position = node.position + delta;
-
-                    self.fix_node_position(id);
-                    return next_frame(Message::Fix(id));
-                }
-            }
-            Message::EndDrag(node) => {
-                log::info!("end drag");
-                self.drag = None;
-                self.fix_node_position(node);
-
-                return next_frame(Message::Fix(node));
-            }
-
-            //Message::Move(po)
-            Message::Background(color) => self.background_color = color,
-            Message::StartBezier(from) => {
-                let from = from.translate(base_offset);
-
-                if let Some(to) = self.workspace.pending() {
-                    if let Some(edge) = Edge::new(from, to).filter(Edge::not_same_node) {
-                        if let Some(index) = self.edges.iter().position(|e| e.eq_node_port(&edge)) {
-                            log::info!("remove edge {} -> {}", edge.output, edge.input);
-                            self.edges.remove(index);
-                        // only one edge for input port
-                        // and not cycle
-                        } else if self
-                            .edges
-                            .iter()
-                            .all(|e| !e.input.eq_node_port(&edge.input))
-                            && self.check_add(edge)
-                        {
-                            log::info!("create edge {} -> {}", edge.output, edge.input);
-
-                            self.edges.push(edge);
-                        }
-                    }
-
-                    self.workspace.end();
-                    self.workspace.request_redraw();
-
-                    self.try_traverse();
-                } else {
-                    log::info!("start {}", from);
-                    self.workspace.start(from);
-                }
-            }
-            Message::CancelBezier => {
-                log::info!("cancel edge creation");
-                self.workspace.end();
-                self.workspace.request_redraw();
-                self.drag = None;
-            }
-            Message::Check(_) => (),
 
             Message::SwizzleSelect(message) => self.swizzle.update(message),
         }
@@ -440,10 +210,9 @@ impl Program for Controls {
                     .color(Color::WHITE),
             );
 
-        let content = self.nodes.values_mut().fold(
-            Workspace::new(&mut self.workspace, &self.edges, Message::CancelBezier),
-            |content, state| content.push(state.position, state.widget()),
-        );
+        let content = Workspace::new(&mut self.workspace);
+        let content: Element<_, _> = content.into();
+        let content = content.map(Message::Workspace);
 
         /*
         let scroll_to_bottom = Text::new("Scroll to bottom");
@@ -520,6 +289,8 @@ fn rgba_sliders(sliders: &mut [slider::State; 4], color: Color) -> Element<Messa
 }
 
 fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, Renderer> {
+    use crate::node::BoxedNode;
+
     type Desc<'a> = [(&'a str, fn() -> Box<dyn crate::node::Node>)];
 
     trait ExtScrollable: Sized {
@@ -636,6 +407,8 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
         .subheader("Basic")
         //.row(&["bool", "color", "f32"])
         //.row(&["vec2", "vec3", "vec4"])
+        .rowx(&[("triangle", crate::node::input::Triangle::boxed)])
+        .rowx(&[("fullscreen", crate::node::input::Fullscreen::boxed)])
         .rowx(&[("vec4", crate::node::input::Input::boxed)])
         .rowx(&[("color", crate::node::input::Color::boxed)])
         .rowx(&[("position", crate::node::input::Position::boxed)])

@@ -73,23 +73,25 @@ impl Scene {
     }
 
     pub fn wrap(shader: &str) -> String {
+        if shader.contains("[[stage(vertex)]]") {
+            return shader.into();
+        }
         /*
         let x = f32(i32(in_vertex_index) - 1);
         let y = f32(i32(in_vertex_index & 1u) * 2 - 1);
         return vec4<f32>(x, y, 0.0, 1.0);
         */
 
-        let vs_triangle = r#"
-    let x = f32(i32(vertex_index) - 1);
-    let y = f32(i32(vertex_index & 1u) * 2 - 1);
-    return vec4<f32>(x, y, 0.0, 1.0);
-"#;
-        /*
-                let vs_fullscreen = r#"
-            let uv = vec2<f32>(f32(i32((vertex_index << 1u) & 2u)), f32(i32(vertex_index & 2u)));
-            return vec4<f32>(uv * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0), 0.0, 1.0);
+        let _vs_triangle = r#"
+            let x = i32(vertex_index) - 1;
+            let y = (i32(vertex_index) & 1) * 2 - 1;
+            return vec4<f32>(f32(x), f32(y), 0.0, 1.0);
         "#;
-        */
+        let _vs_fullscreen = r#"
+            let u = i32(vertex_index << 1u) & 2;
+            let v = i32(vertex_index) & 2;
+            return vec4<f32>(f32(u * 2 - 1), f32(-v * 2 + 1), 0.0, 1.0);
+        "#;
 
         format!(
             r#"
@@ -101,7 +103,7 @@ fn vs_main([[builtin(vertex_index)]] vertex_index: u32) -> [[builtin(position)]]
 fn fs_main([[builtin(position)]] position: vec4<f32>) -> [[location(0)]] vec4<f32> {{
 {}}}
 "#,
-            vs_triangle, shader
+            _vs_fullscreen, shader
         )
     }
 }

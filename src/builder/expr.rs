@@ -1,27 +1,35 @@
-use super::FunctionBuilder;
+use crate::builder::FunctionBuilder;
 use naga::{
     front::Typifier, BinaryOperator, Constant, ConstantInner, Expression, Handle, MathFunction,
     ScalarKind, ScalarValue, Type, TypeInner, UnaryOperator, VectorSize,
 };
 
 pub trait Emit: 'static {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression>;
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression>;
+}
+
+pub struct FunctionArgument(pub u32);
+
+impl Emit for FunctionArgument {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
+        function.append_expression(Expression::FunctionArgument(self.0))
+    }
 }
 
 impl Emit for i64 {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         ScalarValue::Sint(*self).emit(function)
     }
 }
 
 impl Emit for u64 {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         ScalarValue::Uint(*self).emit(function)
     }
 }
 
 impl Emit for f64 {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         ScalarValue::Float(*self).emit(function)
     }
 }
@@ -41,7 +49,7 @@ impl Let {
 }
 
 impl Emit for Let {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         let expr = self.expr.emit(function);
         function.insert_expression_name(expr, &self.name);
         expr
@@ -49,19 +57,13 @@ impl Emit for Let {
 }
 
 impl Emit for Handle<Expression> {
-    fn emit(&self, _function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, _function: &mut FunctionBuilder) -> Handle<Expression> {
         *self
     }
 }
 
-impl Emit for Expression {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
-        function.emit(self.clone())
-    }
-}
-
 impl Emit for ScalarValue {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         let value = *self;
         let expr = Expression::Constant(function.module.append_constant(Constant {
             name: None,
@@ -72,8 +74,60 @@ impl Emit for ScalarValue {
     }
 }
 
+impl<T: Emit> Emit for [T; 2] {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
+        let components = vec![self[0].emit(function), self[1].emit(function)];
+        let mut ifier = Typifier::new();
+        let ty = super::extract::extract_type(
+            &mut ifier,
+            &function.module.module,
+            &function.function,
+            components[0],
+        )
+        .unwrap();
+        let kind = ty.scalar_kind().unwrap();
+        let ty = function.insert_type(Type {
+            name: None,
+            inner: TypeInner::Vector {
+                size: VectorSize::Bi,
+                kind,
+                width: 4,
+            },
+        });
+        function.emit(Expression::Compose { ty, components })
+    }
+}
+
+impl<T: Emit> Emit for [T; 3] {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
+        let components = vec![
+            self[0].emit(function),
+            self[1].emit(function),
+            self[2].emit(function),
+        ];
+        let mut ifier = Typifier::new();
+        let ty = super::extract::extract_type(
+            &mut ifier,
+            &function.module.module,
+            &function.function,
+            components[0],
+        )
+        .unwrap();
+        let kind = ty.scalar_kind().unwrap();
+        let ty = function.insert_type(Type {
+            name: None,
+            inner: TypeInner::Vector {
+                size: VectorSize::Tri,
+                kind,
+                width: 4,
+            },
+        });
+        function.emit(Expression::Compose { ty, components })
+    }
+}
+
 impl<T: Emit> Emit for [T; 4] {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         let components = vec![
             self[0].emit(function),
             self[1].emit(function),
@@ -104,7 +158,7 @@ impl<T: Emit> Emit for [T; 4] {
 pub struct Math(MathFunction, arrayvec::ArrayVec<Box<dyn Emit>, 4>);
 
 impl Emit for Math {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         let fun = &self.0;
         let args = &self.1;
         let expr = Expression::Math {
@@ -121,7 +175,7 @@ impl Emit for Math {
 pub struct Cast(ScalarKind, Box<dyn Emit>);
 
 impl Emit for Cast {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         let expr = Expression::As {
             expr: self.1.emit(function),
             kind: self.0,
@@ -134,7 +188,7 @@ impl Emit for Cast {
 pub struct Binary(Box<dyn Emit>, BinaryOperator, Box<dyn Emit>);
 
 impl Emit for Binary {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         let expr = Expression::Binary {
             left: self.0.emit(function),
             op: self.1,
@@ -147,7 +201,7 @@ impl Emit for Binary {
 pub struct Unary(UnaryOperator, Box<dyn Emit>);
 
 impl Emit for Unary {
-    fn emit(&self, function: &mut FunctionBuilder<'_>) -> Handle<Expression> {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         let expr = Expression::Unary {
             op: self.0,
             expr: self.1.emit(function),
@@ -186,6 +240,14 @@ pub fn ior(left: impl Emit, right: impl Emit) -> Binary {
 
 pub fn eor(left: impl Emit, right: impl Emit) -> Binary {
     Binary(Box::new(left), BinaryOperator::ExclusiveOr, Box::new(right))
+}
+
+pub fn shift_left(left: impl Emit, right: impl Emit) -> Binary {
+    Binary(Box::new(left), BinaryOperator::ShiftLeft, Box::new(right))
+}
+
+pub fn shift_right(left: impl Emit, right: impl Emit) -> Binary {
+    Binary(Box::new(left), BinaryOperator::ShiftLeft, Box::new(right))
 }
 
 pub fn sint(expr: impl Emit) -> Cast {

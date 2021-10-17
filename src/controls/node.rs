@@ -1,8 +1,8 @@
 use super::{
     edge::{Pending, PortId},
     port::Port,
-    Message,
 };
+use crate::node::NodeId;
 use crate::style::{self, FONT_SIZE};
 use crate::widget::pad;
 use iced_wgpu::Renderer;
@@ -10,7 +10,7 @@ use iced_winit::{
     alignment, Alignment, Column, Container, Element, Length, Point, Row, Rule, Space, Text,
 };
 
-slotmap::new_key_type! { pub struct NodeId; }
+pub type NodeMap = slotmap::SlotMap<NodeId, NodeWidget>;
 
 impl ToString for NodeId {
     fn to_string(&self) -> String {
@@ -19,6 +19,19 @@ impl ToString for NodeId {
         let version = ((value >> 32) | 1) as u32; // Ensure version is odd.
         format!("{}v{}", idx, version)
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum Message {
+    Dynamic(NodeId, Box<dyn crate::node::DynMessage>),
+    Remove(NodeId),
+
+    DragStart(NodeId),
+    DragMove(Point),
+    DragEnd(NodeId),
+
+    StartEdge(Pending),
+    CancelEdge,
 }
 
 pub struct NodeWidget {
@@ -36,17 +49,19 @@ pub struct NodeWidget {
 }
 
 impl NodeWidget {
-    pub fn new(id: NodeId, position: Point, node: Box<dyn crate::node::Node>) -> Self {
+    pub fn new(id: NodeId, position: Point, node: impl Into<Box<dyn crate::node::Node>>) -> Self {
+        let node = node.into();
+        let desc = node.desc();
         Self {
             id,
             position,
-            inputs: node
-                .inputs()
+            inputs: desc
+                .inputs
                 .iter()
                 .map(|(name, ty)| Port::new(name, *ty))
                 .collect(),
-            outputs: node
-                .outputs()
+            outputs: desc
+                .outputs
                 .iter()
                 .map(|(name, ty)| Port::new(name, *ty))
                 .collect(),
@@ -58,7 +73,7 @@ impl NodeWidget {
     }
 
     pub fn label(&self) -> &str {
-        self.node.label()
+        self.node.desc().label
     }
 
     pub fn widget(&mut self) -> Element<Message, Renderer> {
@@ -85,8 +100,8 @@ impl NodeWidget {
         ) -> pad::Pad<Message> {
             pad::Pad::new(state, content)
                 .padding([2, 0])
-                .on_press(Message::StartDrag(node))
-                .on_release(Message::EndDrag(node))
+                .on_press(Message::DragStart(node))
+                .on_release(Message::DragEnd(node))
                 .interaction(iced_native::mouse::Interaction::Grab)
         }
 
@@ -112,7 +127,7 @@ impl NodeWidget {
         }
 
         let title = {
-            let title = text_left(self.node.label()).width(Length::Fill);
+            let title = text_left(self.node.desc().label).width(Length::Fill);
             let title = grap_pad(self.id, &mut self.title_state, title)
                 .width(Length::Fill)
                 .padding([0, 4]);
@@ -120,7 +135,7 @@ impl NodeWidget {
             let close = text_center("×").size(16).width(Length::Units(FONT_SIZE));
             let close = pad::Pad::new(&mut self.close, close)
                 .padding([2, 0])
-                .on_release(Message::RemoveNode(self.id));
+                .on_release(Message::Remove(self.id));
 
             Row::new()
                 .width(Length::Fill)
@@ -135,12 +150,12 @@ impl NodeWidget {
         let rule = Rule::horizontal(0).style(style::Node);
         let io = Row::new().push(inputs).push(outputs);
 
-        let width = Length::Units(self.node.width());
-        let inner = Column::new().push(title).push(rule).push(io).push(
-            self.node
-                .view(node)
-                .map(move |m| Message::NodeInternal(node, m)),
-        );
+        let width = Length::Units(self.node.desc().width);
+        let inner = Column::new()
+            .push(title)
+            .push(rule)
+            .push(io)
+            .push(self.node.view(node).map(move |m| Message::Dynamic(node, m)));
 
         Container::new(inner)
             .style(style::Node)

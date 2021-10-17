@@ -67,49 +67,134 @@ pub mod texture {
     pub struct Texture3DAsset;
 }
 
-use super::{GenError, Message, Node, NodeId};
+use super::{Message, Node, NodeDescriptor, NodeId};
+use crate::builder::{expr::Emit, FunctionBuilder, NodeBuilder};
+use crate::controls::edge::{Output, PortId};
 use iced_native::{
     widget::{slider, text_input},
     Column, Element, Length, Slider,
 };
 use iced_wgpu::Renderer;
+use naga::{Expression, Handle};
+
+#[derive(Debug, Default)]
+pub struct Float {
+    pub value: f64,
+}
+
+impl NodeBuilder for Float {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        (output.port == PortId(0)).then(|| self.value.emit(function))
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Vec2 {
+    pub value: [f64; 2],
+}
+
+impl NodeBuilder for Vec2 {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        (output.port == PortId(0)).then(|| self.value.emit(function))
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Vec3 {
+    pub value: [f64; 3],
+}
+
+impl NodeBuilder for Vec3 {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        (output.port == PortId(0)).then(|| self.value.emit(function))
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Vec4 {
+    pub value: [f64; 4],
+}
+
+impl NodeBuilder for Vec4 {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        (output.port == PortId(0)).then(|| self.value.emit(function))
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct Triangle;
+
+impl NodeBuilder for Triangle {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        if output.port == PortId(0) {
+            use crate::builder::expr::*;
+
+            let vertex_index = FunctionArgument(0).emit(function);
+            let x = sub(vertex_index, 1u64);
+            let y = sub(mul(and(vertex_index, 1u64), 2u64), 1u64);
+
+            Some(
+                [
+                    Let::new("x", float(sint(x))).emit(function),
+                    Let::new("y", float(sint(y))).emit(function),
+                    0f64.emit(function),
+                    1f64.emit(function),
+                ]
+                .emit(function),
+            )
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Fullscreen;
+
+impl NodeBuilder for Fullscreen {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        if output.port == PortId(0) {
+            use crate::builder::expr::*;
+
+            let vertex_index = FunctionArgument(0).emit(function);
+            let u = and(shift_left(vertex_index, 1u64), 2u64);
+            let v = and(vertex_index, 2u64);
+            let u = add(mul(sint(u), 2i64), -1i64);
+            let v = add(mul(sint(v), -2i64), 1i64);
+
+            Some(
+                [
+                    Let::new("x", float(sint(u))).emit(function),
+                    Let::new("y", float(sint(v))).emit(function),
+                    0f64.emit(function),
+                    1f64.emit(function),
+                ]
+                .emit(function),
+            )
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct Input {
     data: [(text_input::State, f32); 4],
 }
 
-impl Input {
-    pub fn boxed() -> Box<dyn Node> {
-        Box::new(Self::default())
+impl NodeBuilder for Input {
+    fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>> {
+        None
     }
 }
 
 impl Node for Input {
-    fn label(&self) -> &str {
-        "v4f"
-    }
-
-    fn width(&self) -> u16 {
-        100
-    }
-
-    fn inputs(&self) -> &[(&str, super::Type)] {
-        &[]
-    }
-
-    fn outputs(&self) -> &[(&str, super::Type)] {
-        &[("out", super::Type::V4F)]
-    }
-
-    fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {
-        if let ([], [ret]) = (inputs, outputs) {
-            Ok(format!(
-                "let {} = vec4<f32>({:?}, {:?}, {:?}, {:?});",
-                ret, self.data[0].1, self.data[1].1, self.data[2].1, self.data[3].1
-            ))
-        } else {
-            Err(GenError)
+    fn desc(&self) -> NodeDescriptor<'_> {
+        NodeDescriptor {
+            label: "vec4<f32>",
+            width: 100,
+            inputs: &[],
+            outputs: &[("out", super::Type::V4F)],
         }
     }
 
@@ -140,48 +225,37 @@ impl Node for Input {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct Color {
     sliders: [slider::State; 4],
     color: iced_native::Color,
+    vector: Vec4,
 }
 
-impl Color {
-    pub fn boxed() -> Box<dyn Node> {
-        Box::new(Self::default())
+impl NodeBuilder for Color {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        self.vector.expr(function, output)
     }
 }
 
 impl Node for Color {
-    fn label(&self) -> &str {
-        "color"
-    }
-
-    fn width(&self) -> u16 {
-        100
-    }
-
-    fn inputs(&self) -> &[(&str, super::Type)] {
-        &[]
-    }
-
-    fn outputs(&self) -> &[(&str, super::Type)] {
-        &[("out", super::Type::V4F)]
-    }
-
-    fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {
-        if let ([], [ret]) = (inputs, outputs) {
-            Ok(format!(
-                "let {} = vec4<f32>({:?}, {:?}, {:?}, {:?});",
-                ret, self.color.r, self.color.g, self.color.b, self.color.a
-            ))
-        } else {
-            Err(GenError)
+    fn desc(&self) -> NodeDescriptor<'_> {
+        NodeDescriptor {
+            label: "color",
+            width: 100,
+            inputs: &[],
+            outputs: &[("out", super::Type::V4F)],
         }
     }
 
     fn update(&mut self, _node: NodeId, message: Message) {
         self.color = super::downcast_message::<iced_native::Color>(message).unwrap();
+        self.vector.value = [
+            self.color.r as f64,
+            self.color.g as f64,
+            self.color.b as f64,
+            self.color.a as f64,
+        ];
     }
 
     fn view(&mut self, _node: NodeId) -> Element<Message, Renderer> {
@@ -207,36 +281,43 @@ fn rgba_sliders(
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Position {}
+pub struct Position;
 
-impl Position {
-    pub fn boxed() -> Box<dyn Node> {
-        Box::new(Self::default())
+impl NodeBuilder for Position {
+    fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>> {
+        None
     }
 }
 
 impl Node for Position {
-    fn label(&self) -> &str {
-        "position"
+    fn desc(&self) -> NodeDescriptor<'_> {
+        NodeDescriptor {
+            label: "position",
+            width: 100,
+            inputs: &[],
+            outputs: &[("out", super::Type::V4F)],
+        }
     }
+}
 
-    fn width(&self) -> u16 {
-        100
+impl Node for Triangle {
+    fn desc(&self) -> NodeDescriptor<'_> {
+        NodeDescriptor {
+            label: "triangle",
+            width: 75,
+            inputs: &[],
+            outputs: &[("out", super::Type::V4F)],
+        }
     }
+}
 
-    fn inputs(&self) -> &[(&str, super::Type)] {
-        &[]
-    }
-
-    fn outputs(&self) -> &[(&str, super::Type)] {
-        &[("out", super::Type::V4F)]
-    }
-
-    fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {
-        if let ([], [ret]) = (inputs, outputs) {
-            Ok(format!("let {} = position;", ret,))
-        } else {
-            Err(GenError)
+impl Node for Fullscreen {
+    fn desc(&self) -> NodeDescriptor<'_> {
+        NodeDescriptor {
+            label: "fullscreen",
+            width: 75,
+            inputs: &[],
+            outputs: &[("out", super::Type::V4F)],
         }
     }
 }

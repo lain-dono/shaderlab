@@ -1,4 +1,4 @@
-use super::{Message, Pending};
+use super::{node::Message, Pending};
 use crate::style::{FONT_SIZE, PORT_COLOR};
 use iced_graphics::backend::Text as _;
 use iced_native::{
@@ -11,8 +11,8 @@ use iced_wgpu::{Defaults, Primitive, Renderer};
 use std::{cell::Cell, hash::Hash};
 
 pub struct Port {
-    pub label: String,
-    pub ty: crate::node::Type,
+    label: String,
+    ty: crate::node::Type,
     is_pressed: bool,
     slot: Cell<Point>,
 }
@@ -38,7 +38,7 @@ impl Port {
             is_pressed: &mut self.is_pressed,
             slot: &self.slot,
             content: &self.label,
-            on_press: Message::StartBezier(on_press),
+            on_press: Message::StartEdge(on_press),
             is_input: on_press.is_input(),
             size: FONT_SIZE,
         })

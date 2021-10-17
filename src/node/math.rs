@@ -1,6 +1,123 @@
-use super::{GenError, Message, Node, NodeId};
-use iced_native::{widget::pick_list, Element, Length as IcedLength};
-use iced_wgpu::Renderer;
+use super::{Node, NodeDescriptor};
+use crate::builder::{FunctionBuilder, NodeBuilder};
+use crate::controls::edge::{Output, PortId};
+use arrayvec::ArrayVec;
+use naga::{
+    BinaryOperator, Expression, Handle, MathFunction, ScalarKind, SwizzleComponent, UnaryOperator,
+    VectorSize,
+};
+
+pub struct Math {
+    fun: MathFunction,
+    args: ArrayVec<Option<Output>, 4>,
+}
+
+impl Math {
+    pub fn new(fun: MathFunction) -> Self {
+        let mut args = ArrayVec::new();
+        for _ in 0..fun.argument_count() {
+            args.push(None);
+        }
+        Self { fun, args }
+    }
+
+    pub fn set(&mut self, index: usize, value: impl Into<Option<Output>>) {
+        self.args[index] = value.into();
+    }
+}
+
+impl NodeBuilder for Math {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        if output.port != PortId(0) {
+            return None;
+        }
+
+        let arg = function.node(self.args[0]?)?;
+
+        let arg1 = if let Some(port) = self.args.get(1) {
+            Some(function.node((*port)?)?)
+        } else {
+            None
+        };
+
+        let arg2 = if let Some(port) = self.args.get(2) {
+            Some(function.node((*port)?)?)
+        } else {
+            None
+        };
+
+        let arg3 = if let Some(port) = self.args.get(3) {
+            Some(function.node((*port)?)?)
+        } else {
+            None
+        };
+
+        Some(function.emit(Expression::Math {
+            fun: self.fun,
+            arg,
+            arg1,
+            arg2,
+            arg3,
+        }))
+    }
+}
+
+pub struct Binary {
+    op: BinaryOperator,
+    left: Option<Output>,
+    right: Option<Output>,
+}
+
+impl NodeBuilder for Binary {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        if output.port == PortId(0) {
+            let left = function.node(self.left?)?;
+            let right = function.node(self.right?)?;
+            let op = self.op;
+            Some(function.emit(Expression::Binary { op, left, right }))
+        } else {
+            None
+        }
+    }
+}
+
+pub struct Unary {
+    op: UnaryOperator,
+    expr: Option<Output>,
+}
+
+impl NodeBuilder for Unary {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        if output.port == PortId(0) {
+            let expr = function.node(self.expr?)?;
+            let op = self.op;
+            Some(function.emit(Expression::Unary { op, expr }))
+        } else {
+            None
+        }
+    }
+}
+
+pub struct Swizzle {
+    pub size: VectorSize,
+    pub vector: Option<Output>,
+    pub pattern: [SwizzleComponent; 4],
+}
+
+impl NodeBuilder for Swizzle {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        if output.port == PortId(0) {
+            let vector = function.node(self.vector?)?;
+            Some(function.emit(Expression::Swizzle {
+                size: self.size,
+                vector,
+                pattern: self.pattern,
+            }))
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct ChangeType(Type);
@@ -15,12 +132,11 @@ pub enum Type {
 
 impl From<Type> for super::Type {
     fn from(ty: Type) -> Self {
-        use super::{Scalar::Float, VectorSize};
         match ty {
-            Type::F32 => Self::Scalar(Float),
-            Type::V2F => Self::Vector(Float, VectorSize::Bi),
-            Type::V3F => Self::Vector(Float, VectorSize::Tri),
-            Type::V4F => Self::Vector(Float, VectorSize::Quad),
+            Type::F32 => Self::Scalar(ScalarKind::Float),
+            Type::V2F => Self::Vector(ScalarKind::Float, VectorSize::Bi),
+            Type::V3F => Self::Vector(ScalarKind::Float, VectorSize::Tri),
+            Type::V4F => Self::Vector(ScalarKind::Float, VectorSize::Quad),
         }
     }
 }
@@ -38,58 +154,39 @@ impl ToString for Type {
 }
 
 macro_rules! custom {
-
     ($name:ident :: $fn:ident ($($arg:ident),+) -> $ret:ident ($format:literal, $($arg_expr:expr),+)) => {
         #[derive(Clone, Debug)]
         pub struct $name {
-            ty_select: pick_list::State<Type>,
-            selected: Option<Type>
+            //ty_select: pick_list::State<Type>,
+            //selected: Option<Type>
         }
 
         impl Default for $name {
             fn default() -> Self {
                 Self {
-                    ty_select: pick_list::State::default(),
-                    selected: Some(Type::V4F),
+                    //ty_select: pick_list::State::default(),
+                    //selected: Some(Type::V4F),
                 }
             }
         }
 
-        impl $name {
-            pub fn boxed() -> Box<dyn Node> {
-                Box::new(Self::default())
+        impl NodeBuilder for $name {
+            fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>> {
+                None
             }
         }
 
         impl Node for $name {
-            fn label(&self) -> &str {
-                stringify!($fn)
-            }
-
-            fn width(&self) -> u16 {
-                80
-            }
-
-            fn inputs(&self) -> &[(&str, super::Type)] {
-                &[$((stringify!($arg), super::Type::V4F)),+]
-            }
-
-            fn outputs(&self) -> &[(&str, super::Type)] {
-                &[(stringify!($ret), super::Type::V4F)]
-            }
-
-            fn generate(
-                &self,
-                inputs: &[Option<String>],
-                outputs: &[String],
-            ) -> Result<String, GenError> {
-                if let ([$(Some($arg)),+], [$ret]) = (inputs, outputs) {
-                    Ok(format!($format, $($arg_expr),+))
-                } else {
-                    Err(GenError)
+            fn desc(&self) -> NodeDescriptor<'_> {
+                NodeDescriptor {
+                    label: stringify!($fn),
+                    width: 75,
+                    inputs: &[$((stringify!($arg), super::Type::V4F)),+],
+                    outputs: &[(stringify!($ret), super::Type::V4F)]
                 }
             }
 
+            /*
             fn update(&mut self, _node: NodeId, message: Message) {
                 let message  = super::downcast_message::<ChangeType>(message).unwrap();
                 self.selected = Some(message.0);
@@ -103,6 +200,7 @@ macro_rules! custom {
                     .width(IcedLength::Fill)
                     .into()
             }
+            */
         }
     };
 }
@@ -121,52 +219,52 @@ macro_rules! math_op {
 
 // Advanced
 
-math_fn!(Abs::abs(a));
-math_fn!(Exp::exp(a));
-math_fn!(Exp2::exp2(a));
-math_fn!(Length::length(a));
-math_fn!(Log::log(a));
-math_op!(Rem::rem(a % b));
+math_fn!(Abs::abs(x));
+math_fn!(Exp::exp(x));
+math_fn!(Exp2::exp2(x));
+math_fn!(Length::length(x));
+math_fn!(Log::log(x));
+math_op!(Rem::rem(x % y));
 // negate?
-math_fn!(Normalize::normalize(a));
+math_fn!(Normalize::normalize(x));
 // posterize
 // recip
 // recip_sqrt/invsqrt
 
 // Basic
 //custom!(Add::add(a, b) -> out ("let {} = {} {} {};", out, a, "+", b));
-math_op!(Add::add(a + b));
-math_op!(Sub::sub(a - b));
-math_op!(Mul::mul(a * b));
-math_op!(Div::div(a / b));
-math_fn!(Pow::pow(a, b));
-math_fn!(Sqrt::sqrt(a));
+math_op!(Add::add(x + y));
+math_op!(Sub::sub(x - y));
+math_op!(Mul::mul(x * y));
+math_op!(Div::div(x / y));
+math_fn!(Pow::pow(x, y));
+math_fn!(Sqrt::sqrt(x));
 
 // Derivative
-math_fn!(DpDx::dpdx(a));
-math_fn!(DpDy::dpdy(a));
+math_fn!(DpDx::dpdx(e));
+math_fn!(DpDy::dpdy(e));
 //math_fn!(DPDXY::dpdxy(a));
 
 // Trigonometry
 
-math_fn!(Acos::acos(a));
-math_fn!(Asin::asin(a));
-math_fn!(Atan::atan(a));
-math_fn!(Atan2::atan2(a, b));
-math_fn!(Cos::cos(a));
-math_fn!(Sin::sin(a));
-math_fn!(Tan::tan(a));
-math_fn!(Cosh::cosh(a));
-math_fn!(Sinh::sinh(a));
-math_fn!(Tanh::tanh(a));
+math_fn!(Acos::acos(x));
+math_fn!(Asin::asin(x));
+math_fn!(Atan::atan(x));
+math_fn!(Atan2::atan2(y, x));
+math_fn!(Cos::cos(x));
+math_fn!(Sin::sin(x));
+math_fn!(Tan::tan(x));
+math_fn!(Cosh::cosh(x));
+math_fn!(Sinh::sinh(x));
+math_fn!(Tanh::tanh(x));
 
 custom!(RadiansToDegres::to_degres(a) -> out ("let {} = {} * 57.29578;", out, a));
 custom!(DegresToRadians::to_radians(a) -> out ("let {} = {} * 0.017453292;", out, a));
 
 // Rounding
-math_fn!(Ceil::ceil(a));
-math_fn!(Floor::floor(a));
-math_fn!(Round::round(a));
-math_fn!(Sign::sign(a));
-math_fn!(Trunc::trunc(a));
-math_fn!(Step::step(a, b));
+math_fn!(Ceil::ceil(x));
+math_fn!(Floor::floor(x));
+math_fn!(Round::round(x));
+math_fn!(Sign::sign(x));
+math_fn!(Trunc::trunc(x));
+math_fn!(Step::step(x, y));

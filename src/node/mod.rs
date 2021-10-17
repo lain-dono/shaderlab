@@ -1,9 +1,11 @@
+use crate::{builder::NodeBuilder, controls::edge::Edge};
+pub use naga::{ScalarKind as Scalar, VectorSize};
+
 pub mod input;
+pub mod master;
 pub mod math;
 
-use crate::controls::NodeId;
-
-pub use naga::{ScalarKind as Scalar, VectorSize};
+slotmap::new_key_type! { pub struct NodeId; }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
@@ -16,6 +18,16 @@ impl Type {
     pub const V2F: Self = Self::Vector(Scalar::Float, VectorSize::Bi);
     pub const V3F: Self = Self::Vector(Scalar::Float, VectorSize::Tri);
     pub const V4F: Self = Self::Vector(Scalar::Float, VectorSize::Quad);
+}
+
+pub trait BoxedNode {
+    fn boxed() -> Box<dyn Node>;
+}
+
+impl<T: Node + Default> BoxedNode for T {
+    fn boxed() -> Box<dyn Node> {
+        Box::new(Self::default())
+    }
 }
 
 pub type Message = Box<dyn DynMessage>;
@@ -49,19 +61,35 @@ pub fn upcast_message(message: impl DynMessage + Clone) -> Message {
 #[derive(Debug)]
 pub struct GenError;
 
-pub trait Node: std::fmt::Debug + 'static {
-    fn label(&self) -> &str;
+pub struct NodeDescriptor<'a> {
+    pub label: &'a str,
+    pub width: u16,
+    pub inputs: &'a [(&'a str, Type)],
+    pub outputs: &'a [(&'a str, Type)],
+}
 
-    fn width(&self) -> u16 {
-        150
+pub trait Node: std::fmt::Debug + 'static + downcast_rs::Downcast + NodeBuilder {
+    fn desc(&self) -> NodeDescriptor<'_>;
+
+    fn add_edge(&mut self, edge: Edge, is_input: bool) {
+        log::info!(
+            "node add edge {} -> {} {}",
+            edge.output(),
+            edge.input(),
+            is_input
+        );
     }
 
-    fn inputs(&self) -> &[(&str, Type)];
-    fn outputs(&self) -> &[(&str, Type)];
+    fn remove_edge(&mut self, edge: Edge, is_input: bool) {
+        log::info!(
+            "node remove edge {} -> {} {}",
+            edge.output(),
+            edge.input(),
+            is_input
+        );
+    }
 
     fn update(&mut self, _node: NodeId, _message: Message) {}
-
-    fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError>;
 
     fn view(
         &mut self,
@@ -71,78 +99,4 @@ pub trait Node: std::fmt::Debug + 'static {
     }
 }
 
-pub fn node_return(inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {
-    if let ([Some(a)], []) = (inputs, outputs) {
-        Ok(format!("return {};", a))
-    } else {
-        Err(GenError)
-    }
-}
-
-#[derive(Clone, Default, Debug)]
-pub struct Return;
-
-impl Node for Return {
-    fn label(&self) -> &str {
-        "return"
-    }
-
-    fn width(&self) -> u16 {
-        80
-    }
-
-    fn inputs(&self) -> &[(&str, Type)] {
-        &[("color", Type::V4F)]
-    }
-    fn outputs(&self) -> &[(&str, Type)] {
-        &[]
-    }
-
-    fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {
-        if let ([Some(a)], []) = (inputs, outputs) {
-            Ok(format!("return {};", a))
-        } else {
-            Err(GenError)
-        }
-    }
-}
-
-#[derive(Clone, Default, Debug)]
-pub struct NodeDebug;
-
-impl Node for NodeDebug {
-    fn label(&self) -> &str {
-        "debug"
-    }
-
-    fn inputs(&self) -> &[(&str, Type)] {
-        &[
-            ("A_in", Type::V4F),
-            ("B_in", Type::V4F),
-            ("C_in", Type::V4F),
-        ]
-    }
-    fn outputs(&self) -> &[(&str, Type)] {
-        &[
-            ("A_out", Type::V4F),
-            ("B_out", Type::V4F),
-            ("C_out", Type::V4F),
-        ]
-    }
-
-    fn generate(&self, inputs: &[Option<String>], outputs: &[String]) -> Result<String, GenError> {
-        let inputs = inputs
-            .iter()
-            .map(|i| match i {
-                Some(s) => s.clone(),
-                None => "None".to_string(),
-            })
-            .collect::<Vec<_>>();
-
-        Ok(format!(
-            "let ({}) = dbg({});",
-            outputs.join(", "),
-            inputs.join(", "),
-        ))
-    }
-}
+downcast_rs::impl_downcast!(Node);

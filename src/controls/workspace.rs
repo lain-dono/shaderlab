@@ -1,4 +1,9 @@
-use super::{Edge, Message, Pending};
+use crate::controls::{
+    edge::{Input, Output},
+    node::{Message, NodeMap, NodeWidget},
+    Edge, Pending, PortId,
+};
+use crate::node::{Node, NodeId};
 use iced_graphics::canvas::{self, Canvas, Cursor, Frame, Geometry};
 use iced_graphics::{Defaults, Primitive};
 use iced_native::{
@@ -8,11 +13,152 @@ use iced_native::{
 use iced_wgpu::Renderer;
 use std::cell::Cell;
 
+pub fn fix_name(s: &str) -> String {
+    s.chars()
+        .map(|c| if !c.is_ascii_alphanumeric() { '_' } else { c })
+        .collect()
+}
+
 #[derive(Default)]
 pub struct State {
     bounds: Cell<Rectangle>,
     pending: Option<Pending>,
     cache: canvas::Cache,
+
+    nodes: NodeMap,
+    edges: Vec<Edge>,
+}
+
+impl State {
+    pub fn with_nodes(nodes: NodeMap) -> Self {
+        Self {
+            nodes,
+            ..Self::default()
+        }
+    }
+
+    pub fn update_node(&mut self, node: NodeId, message: Box<dyn crate::node::DynMessage>) {
+        self.nodes[node].node.update(node, message);
+    }
+
+    pub fn add_node(&mut self, node: Box<dyn Node>) {
+        log::info!("add node {:?}", node);
+        let bounds = self.bounds();
+        let position = Point::ORIGIN + (bounds.center() - bounds.position());
+
+        self.nodes
+            .insert_with_key(|id| NodeWidget::new(id, position, node));
+    }
+
+    pub fn remove_node(&mut self, node: NodeId) {
+        let removed = self.edges.iter().filter(|edge| edge.has_node(node));
+
+        for &edge in removed {
+            self.nodes[edge.input().node].node.remove_edge(edge, true);
+            self.nodes[edge.output().node].node.remove_edge(edge, false);
+        }
+
+        self.edges.retain(|edge| !edge.has_node(node));
+
+        self.nodes.remove(node);
+        self.request_redraw();
+    }
+
+    pub fn start_edge(&mut self, from: Pending) {
+        let base_offset = Point::ORIGIN - self.bounds().position();
+        let from = from.translate(base_offset);
+
+        if let Some(to) = self.pending() {
+            if let Some(edge) = Edge::new(from, to).filter(Edge::not_same_node) {
+                if let Some(index) = self.edges.iter().position(|e| e.eq_node_port(&edge)) {
+                    log::info!("remove edge {} -> {}", edge.output(), edge.input());
+                    self.edges.remove(index);
+                    self.nodes[edge.input().node].node.remove_edge(edge, true);
+                    self.nodes[edge.output().node].node.remove_edge(edge, false);
+                // only one edge for input port
+                // and not cycle
+                } else if self.edges.iter().all(|e| e.input() != edge.input())
+                    && self.check_add(edge)
+                {
+                    log::info!("create edge {} -> {}", edge.output(), edge.input());
+                    self.edges.push(edge);
+                    self.nodes[edge.input().node].node.add_edge(edge, true);
+                    self.nodes[edge.output().node].node.add_edge(edge, false);
+                }
+            }
+
+            self.end();
+            self.request_redraw();
+        } else {
+            log::info!("start {}", from);
+            self.start(from);
+        }
+    }
+
+    pub fn move_node(&mut self, id: NodeId, delta: Vector) {
+        let node = &mut self.nodes[id];
+        node.position = node.position + delta;
+        self.fix_node_position(id);
+    }
+
+    pub fn check_add(&self, edge: Edge) -> bool {
+        let mut graph = crate::graph::Graph::default();
+        for edge in &self.edges {
+            graph.add_edge(edge.output().node, edge.input().node);
+        }
+        graph.add_edge(edge.output().node, edge.input().node);
+        !graph.is_reachable(edge.input().node, edge.output().node)
+    }
+
+    pub fn fix_node_position(&mut self, node: NodeId) {
+        let base_offset = Point::ORIGIN - self.bounds().position();
+
+        let node = if let Some(node) = self.nodes.get(node) {
+            node
+        } else {
+            log::warn!("can't find node: {:?}", node);
+            return;
+        };
+
+        for (port, input) in node.inputs.iter().enumerate() {
+            let position = input.slot();
+            for edge in &mut self.edges {
+                if edge.input() == Input::new(node.id, PortId(port)) {
+                    edge.set_input_position(position + base_offset);
+                }
+            }
+        }
+
+        for (port, output) in node.outputs.iter().enumerate() {
+            let position = output.slot();
+            for edge in &mut self.edges {
+                if edge.output() == Output::new(node.id, PortId(port)) {
+                    edge.set_output_position(position + base_offset);
+                }
+            }
+        }
+
+        self.request_redraw();
+    }
+
+    pub fn try_traverse(&mut self) -> Option<String> {
+        log::info!("try generate");
+
+        let module = self
+            .nodes
+            .values()
+            .find_map(|node| node.node.downcast_ref::<crate::node::master::Master>())
+            .and_then(|master| master.entry(&self.nodes));
+
+        if let Some(module) = module {
+            log::trace!("{:#?}", module.module());
+            let source = module.build();
+            println!("{}", source);
+            Some(source)
+        } else {
+            None
+        }
+    }
 }
 
 impl State {
@@ -50,35 +196,33 @@ pub struct Workspace<'a> {
 }
 
 impl<'a> Workspace<'a> {
-    pub fn new(state: &'a mut State, curves: &'a [Edge], cancel: Message) -> Self {
+    pub fn new(state: &'a mut State) -> Self {
         let pending = &mut state.pending;
         let cache = &mut state.cache;
         let canvas: Element<_, _> = Canvas::new(Bezier {
             pending,
             cache,
-            curves,
-            cancel,
+            curves: &state.edges,
         })
         .width(Length::Fill)
         .height(Length::Fill)
         .into();
 
+        let children = state
+            .nodes
+            .values_mut()
+            .map(|state| Item {
+                position: state.position,
+                widget: state.widget(),
+            })
+            .collect();
+
         Self {
             bounds: &state.bounds,
             canvas,
             offset: Vector::new(0.0, 0.0),
-            children: vec![],
+            children,
         }
-    }
-
-    pub fn push(
-        mut self,
-        position: Point,
-        widget: impl Into<Element<'a, Message, Renderer>>,
-    ) -> Self {
-        let widget = widget.into();
-        self.children.push(Item { position, widget });
-        self
     }
 }
 
@@ -141,7 +285,7 @@ impl<'a> Widget<Message, Renderer> for Workspace<'a> {
         let canvas_layout = children.next();
 
         if let Event::Mouse(mouse::Event::CursorMoved { position }) = event {
-            messages.push(Message::Move(position))
+            messages.push(Message::DragMove(position))
         }
 
         let mut status = event::Status::Ignored;
@@ -242,14 +386,13 @@ impl<'a> From<Workspace<'a>> for Element<'a, Message, Renderer> {
     }
 }
 
-struct Bezier<'a, Message> {
+struct Bezier<'a> {
     pending: &'a Option<Pending>,
     cache: &'a mut canvas::Cache,
     curves: &'a [Edge],
-    cancel: Message,
 }
 
-impl<'a, Message: Clone> canvas::Program<Message> for Bezier<'a, Message> {
+impl<'a> canvas::Program<Message> for Bezier<'a> {
     fn update(
         &mut self,
         event: canvas::event::Event,
@@ -262,7 +405,7 @@ impl<'a, Message: Clone> canvas::Program<Message> for Bezier<'a, Message> {
 
         if let canvas::Event::Mouse(mouse_event) = event {
             let message = match mouse_event {
-                mouse::Event::ButtonPressed(mouse::Button::Left) => Some(self.cancel.clone()),
+                mouse::Event::ButtonPressed(mouse::Button::Left) => Some(Message::CancelEdge),
                 _ => None,
             };
 
