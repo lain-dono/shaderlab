@@ -1,5 +1,5 @@
 use iced_wgpu::wgpu;
-use iced_winit::{Color, Rectangle};
+use iced_winit::Rectangle;
 
 fn hash_shader(x: &str) -> u64 {
     use fnv::FnvBuildHasher;
@@ -9,24 +9,17 @@ fn hash_shader(x: &str) -> u64 {
     hasher.finish()
 }
 
+#[derive(Default)]
 pub struct Scene {
-    pipeline: wgpu::RenderPipeline,
+    pipeline: Option<wgpu::RenderPipeline>,
     hash: u64,
 }
 
 impl Scene {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let shader = "    return vec4<f32>(0.02, 0.02, 0.02, 1.0);\n";
-        let pipeline = build_pipeline(device, &Self::wrap(shader)).unwrap();
-        let hash = 0;
-        Self { pipeline, hash }
-    }
-
     pub fn clear<'a>(
         &self,
         target: &'a wgpu::TextureView,
         encoder: &'a mut wgpu::CommandEncoder,
-        background_color: Color,
     ) -> wgpu::RenderPass<'a> {
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
@@ -34,16 +27,9 @@ impl Scene {
                 view: target,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear({
-                        let [r, g, b, a] = background_color.into_linear();
-
-                        wgpu::Color {
-                            r: r as f64,
-                            g: g as f64,
-                            b: b as f64,
-                            a: a as f64,
-                        }
-                    }),
+                    load: wgpu::LoadOp::Clear(crate::style::to_clear_color(
+                        crate::style::WORKSPACE_BG,
+                    )),
                     store: true,
                 },
             }],
@@ -58,58 +44,27 @@ impl Scene {
         viewport: Rectangle,
         shader: &str,
     ) {
+        if shader.is_empty() {
+            return;
+        }
+
         let hash = hash_shader(shader);
-        if self.hash != hash_shader(shader) {
-            if let Some(pipeline) = build_pipeline(device, &Self::wrap(shader)) {
-                self.pipeline = pipeline;
-            }
+        if self.hash != hash {
+            self.pipeline = build_pipeline(device, shader);
             self.hash = hash
         }
 
-        let (x, y, w, h) = (viewport.x, viewport.y, viewport.width, viewport.height);
-        render_pass.set_viewport(x.max(0.0), y.max(0.0), w.max(1.0), h.max(1.0), 0.0, 1.0);
-        render_pass.set_pipeline(&self.pipeline);
-        render_pass.draw(0..3, 0..1);
-    }
-
-    pub fn wrap(shader: &str) -> String {
-        if shader.contains("[[stage(vertex)]]") {
-            return shader.into();
+        if let Some(pipeline) = self.pipeline.as_ref() {
+            let (x, y, w, h) = (viewport.x, viewport.y, viewport.width, viewport.height);
+            render_pass.set_viewport(x.max(0.0), y.max(0.0), w.max(1.0), h.max(1.0), 0.0, 1.0);
+            render_pass.set_pipeline(pipeline);
+            render_pass.draw(0..3, 0..1);
         }
-        /*
-        let x = f32(i32(in_vertex_index) - 1);
-        let y = f32(i32(in_vertex_index & 1u) * 2 - 1);
-        return vec4<f32>(x, y, 0.0, 1.0);
-        */
-
-        let _vs_triangle = r#"
-            let x = i32(vertex_index) - 1;
-            let y = (i32(vertex_index) & 1) * 2 - 1;
-            return vec4<f32>(f32(x), f32(y), 0.0, 1.0);
-        "#;
-        let _vs_fullscreen = r#"
-            let u = i32(vertex_index << 1u) & 2;
-            let v = i32(vertex_index) & 2;
-            return vec4<f32>(f32(u * 2 - 1), f32(-v * 2 + 1), 0.0, 1.0);
-        "#;
-
-        format!(
-            r#"
-[[stage(vertex)]]
-fn vs_main([[builtin(vertex_index)]] vertex_index: u32) -> [[builtin(position)]] vec4<f32> {{
-{}}}
-
-[[stage(fragment)]]
-fn fs_main([[builtin(position)]] position: vec4<f32>) -> [[location(0)]] vec4<f32> {{
-{}}}
-"#,
-            _vs_fullscreen, shader
-        )
     }
 }
 
 fn build_pipeline(device: &wgpu::Device, shader: &str) -> Option<wgpu::RenderPipeline> {
-    log::info!("wgsl: {}", shader);
+    log::info!("wgsl:\n{}", shader);
     if let Err(err) = naga::front::wgsl::parse_str(shader) {
         err.emit_to_stderr(shader);
         return None;

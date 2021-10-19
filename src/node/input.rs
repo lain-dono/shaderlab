@@ -67,13 +67,11 @@ pub mod texture {
     pub struct Texture3DAsset;
 }
 
-use super::{Message, Node, NodeDescriptor, NodeId};
 use crate::builder::{expr::Emit, FunctionBuilder, NodeBuilder};
-use crate::controls::edge::{Output, PortId};
-use iced_native::{
-    widget::{slider, text_input},
-    Column, Element, Length, Slider,
-};
+use crate::node::{Dynamic, Event, Node, NodeDescriptor, NodeId, Output, PortId};
+use crate::style;
+use crate::widget::slider;
+use iced_native::{widget::text_input, Column, Container, Element, Length};
 use iced_wgpu::Renderer;
 use naga::{Expression, Handle};
 
@@ -84,7 +82,7 @@ pub struct Float {
 
 impl NodeBuilder for Float {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port == PortId(0)).then(|| self.value.emit(function))
+        (output.port() == PortId(0)).then(|| self.value.emit(function))
     }
 }
 
@@ -95,7 +93,7 @@ pub struct Vec2 {
 
 impl NodeBuilder for Vec2 {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port == PortId(0)).then(|| self.value.emit(function))
+        (output.port() == PortId(0)).then(|| self.value.emit(function))
     }
 }
 
@@ -106,7 +104,7 @@ pub struct Vec3 {
 
 impl NodeBuilder for Vec3 {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port == PortId(0)).then(|| self.value.emit(function))
+        (output.port() == PortId(0)).then(|| self.value.emit(function))
     }
 }
 
@@ -117,7 +115,7 @@ pub struct Vec4 {
 
 impl NodeBuilder for Vec4 {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port == PortId(0)).then(|| self.value.emit(function))
+        (output.port() == PortId(0)).then(|| self.value.emit(function))
     }
 }
 
@@ -126,7 +124,7 @@ pub struct Triangle;
 
 impl NodeBuilder for Triangle {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        if output.port == PortId(0) {
+        if output.port() == PortId(0) {
             use crate::builder::expr::*;
 
             let vertex_index = FunctionArgument(0).emit(function);
@@ -153,7 +151,7 @@ pub struct Fullscreen;
 
 impl NodeBuilder for Fullscreen {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        if output.port == PortId(0) {
+        if output.port() == PortId(0) {
             use crate::builder::expr::*;
 
             let vertex_index = FunctionArgument(0).emit(function);
@@ -177,14 +175,15 @@ impl NodeBuilder for Fullscreen {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct Input {
-    data: [(text_input::State, f32); 4],
+    state: [text_input::State; 4],
+    vector: Vec4,
 }
 
 impl NodeBuilder for Input {
-    fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>> {
-        None
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        self.vector.expr(function, output)
     }
 }
 
@@ -198,28 +197,26 @@ impl Node for Input {
         }
     }
 
-    fn update(&mut self, _node: NodeId, message: Message) {
-        let (index, value) = super::downcast_message::<(usize, f32)>(message).unwrap();
-        self.data[index].1 = value;
+    fn update(&mut self, event: Event) {
+        if let Event::Dynamic(message) = event {
+            let (index, value) = super::downcast_message::<(usize, f64)>(message).unwrap();
+            self.vector.value[index] = value;
+        }
     }
 
-    fn view(&mut self, _node: NodeId) -> Element<Message, Renderer> {
+    fn view(&mut self, _node: NodeId) -> Element<Dynamic, Renderer> {
         let col = Column::new().padding([2, 2]).spacing(2);
 
-        self.data
+        self.state
             .iter_mut()
+            .zip(self.vector.value.iter())
             .enumerate()
             .fold(col, |col, (i, (state, value))| {
                 let value = format!("{:?}", *value);
-                let input = text_input::TextInput::new(state, "", &value, move |s| {
-                    let value: f32 = s.parse().unwrap_or(0.0);
-                    super::upcast_message((i, value))
-                })
-                .padding(1)
-                .width(Length::Fill)
-                .style(crate::style::Node)
-                .size(crate::style::FONT_SIZE);
-                col.push(input)
+                let input = style::Node::input(state, "", &value, move |s| {
+                    super::upcast_message((i, s.parse::<f64>().unwrap_or(0.0)))
+                });
+                col.push(input.width(Length::Fill))
             })
             .into()
     }
@@ -228,7 +225,7 @@ impl Node for Input {
 #[derive(Debug, Default)]
 pub struct Color {
     sliders: [slider::State; 4],
-    color: iced_native::Color,
+    color: iced_wgpu::wgpu::Color,
     vector: Vec4,
 }
 
@@ -248,36 +245,36 @@ impl Node for Color {
         }
     }
 
-    fn update(&mut self, _node: NodeId, message: Message) {
-        self.color = super::downcast_message::<iced_native::Color>(message).unwrap();
-        self.vector.value = [
-            self.color.r as f64,
-            self.color.g as f64,
-            self.color.b as f64,
-            self.color.a as f64,
-        ];
+    fn update(&mut self, event: Event) {
+        if let Event::Dynamic(message) = event {
+            self.color = super::downcast_message::<iced_wgpu::wgpu::Color>(message).unwrap();
+            self.vector.value = [self.color.r, self.color.g, self.color.b, self.color.a];
+        }
     }
 
-    fn view(&mut self, _node: NodeId) -> Element<Message, Renderer> {
-        rgba_sliders(&mut self.sliders, self.color).map(super::upcast_message)
+    fn view(&mut self, _node: NodeId) -> Element<Dynamic, Renderer> {
+        Container::new(rgba_sliders(&mut self.sliders, self.color).map(super::upcast_message))
+            .into()
     }
 }
 
 #[allow(dead_code)]
 fn rgba_sliders(
     sliders: &mut [slider::State; 4],
-    color: iced_native::Color,
-) -> Element<iced_native::Color, Renderer> {
-    use iced_native::Color;
+    color: iced_wgpu::wgpu::Color,
+) -> Element<iced_wgpu::wgpu::Color, Renderer> {
+    use iced_wgpu::wgpu::Color;
 
     let [r, g, b, a] = sliders;
 
-    let r = Slider::new(r, 0.0..=1.0, color.r, move |r| Color { r, ..color }).step(0.01);
-    let g = Slider::new(g, 0.0..=1.0, color.g, move |g| Color { g, ..color }).step(0.01);
-    let b = Slider::new(b, 0.0..=1.0, color.b, move |b| Color { b, ..color }).step(0.01);
-    let a = Slider::new(a, 0.0..=1.0, color.a, move |a| Color { a, ..color }).step(0.01);
+    let r = style::Node::slider(r, 0.0..=1.0, color.r, move |r| Color { r, ..color }).step(0.01);
+    let g = style::Node::slider(g, 0.0..=1.0, color.g, move |g| Color { g, ..color }).step(0.01);
+    let b = style::Node::slider(b, 0.0..=1.0, color.b, move |b| Color { b, ..color }).step(0.01);
+    let a = style::Node::slider(a, 0.0..=1.0, color.a, move |a| Color { a, ..color }).step(0.01);
 
-    Element::from(Column::new().push(r).push(g).push(b).push(a))
+    let col = Column::new().padding([2, 2]).spacing(2);
+
+    Element::from(col.push(r).push(g).push(b).push(a))
 }
 
 #[derive(Clone, Debug, Default)]

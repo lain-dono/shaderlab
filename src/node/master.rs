@@ -1,6 +1,8 @@
-use super::{Node, NodeDescriptor, Type};
-use crate::builder::{FunctionBuilder, ModuleBuilder, NodeBuilder, F32_4, U32};
-use crate::controls::edge::{Edge, Output, PortId};
+use crate::builder::{
+    types::{F32_4, U32},
+    FunctionBuilder, ModuleBuilder, NodeBuilder,
+};
+use crate::node::{Event, Node, NodeDescriptor, Output, PortId, Type};
 use naga::{
     Binding, BuiltIn, EntryPoint, Expression, Handle, Interpolation, Sampling, ShaderStage,
     Statement,
@@ -94,23 +96,11 @@ impl Node for Master {
         }
     }
 
-    fn add_edge(&mut self, edge: Edge, is_input: bool) {
-        assert!(is_input);
-        if edge.input().port == PortId(0) {
-            self.position = Some(edge.output())
-        }
-        if edge.input().port == PortId(1) {
-            self.color = Some(edge.output())
-        }
-    }
-
-    fn remove_edge(&mut self, edge: Edge, is_input: bool) {
-        assert!(is_input);
-        if edge.input().port == PortId(0) {
-            self.position = None
-        }
-        if edge.input().port == PortId(1) {
-            self.color = None
+    fn update(&mut self, event: Event) {
+        match event {
+            Event::Input(PortId(0), remote) => self.position = remote,
+            Event::Input(PortId(1), remote) => self.color = remote,
+            _ => (),
         }
     }
 }

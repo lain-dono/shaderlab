@@ -1,3 +1,5 @@
+#![feature(const_fn_floating_point_arithmetic)]
+
 use futures::task::SpawnExt;
 use iced_futures::Executor;
 use iced_native::futures::{
@@ -108,12 +110,16 @@ pub fn main() {
     let mut local_pool = futures::executor::LocalPool::new();
 
     // Initialize scene and GUI controls
-    let mut scene = Scene::new(&device);
+    let mut scene = Scene::default();
     let controls = Controls::new();
 
     // Initialize iced
     let mut debug = Debug::new();
-    let mut renderer = Renderer::new(Backend::new(&device, Settings::default(), format));
+    let settings = Settings {
+        antialiasing: Some(iced_wgpu::Antialiasing::MSAAx4),
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::new(Backend::new(&device, settings, format));
 
     let mut state = program::State::new(
         controls,
@@ -244,8 +250,7 @@ pub fn main() {
 
                 {
                     // We clear the frame
-                    let mut render_pass =
-                        scene.clear(&target, &mut encoder, program.background_color());
+                    let mut render_pass = scene.clear(&target, &mut encoder);
 
                     // Draw the scene
                     scene.draw(

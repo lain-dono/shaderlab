@@ -1,14 +1,13 @@
-use crate::controls::edge::{Output, PortId};
-use crate::node::NodeId;
+use crate::node::{NodeId, Output, PortId};
 use naga::{
-    Binding, Constant, EntryPoint, Expression, Function, FunctionArgument, FunctionResult,
-    GlobalVariable, Handle, LocalVariable, Module, ScalarKind, Span, Statement, Type, TypeInner,
-    VectorSize,
+    front::Typifier, proc::ResolveError, Binding, Constant, EntryPoint, Expression, Function,
+    FunctionArgument, FunctionResult, GlobalVariable, Handle, LocalVariable, Module, Span,
+    Statement, Type, TypeInner,
 };
 
 pub mod expr;
-pub mod extract;
 pub mod merge;
+pub mod types;
 
 pub trait NodeBuilder {
     fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>>;
@@ -23,66 +22,9 @@ pub type Node = Box<dyn AnyNode>;
 
 impl NodeBuilder for slotmap::SlotMap<NodeId, Node> {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        self[output.node].expr(function, output)
+        self[output.node()].expr(function, output)
     }
 }
-
-impl NodeBuilder for slotmap::SlotMap<NodeId, crate::controls::NodeWidget> {
-    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        self[output.node].node.expr(function, output)
-    }
-}
-
-pub const U32: Type = Type {
-    name: None,
-    inner: TypeInner::Scalar {
-        kind: ScalarKind::Uint,
-        width: 4,
-    },
-};
-
-pub const I32: Type = Type {
-    name: None,
-    inner: TypeInner::Scalar {
-        kind: ScalarKind::Sint,
-        width: 4,
-    },
-};
-
-pub const F32: Type = Type {
-    name: None,
-    inner: TypeInner::Scalar {
-        kind: ScalarKind::Float,
-        width: 4,
-    },
-};
-
-pub const F32_2: Type = Type {
-    name: None,
-    inner: TypeInner::Vector {
-        size: VectorSize::Bi,
-        kind: ScalarKind::Float,
-        width: 4,
-    },
-};
-
-pub const F32_3: Type = Type {
-    name: None,
-    inner: TypeInner::Vector {
-        size: VectorSize::Tri,
-        kind: ScalarKind::Float,
-        width: 4,
-    },
-};
-
-pub const F32_4: Type = Type {
-    name: None,
-    inner: TypeInner::Vector {
-        size: VectorSize::Quad,
-        kind: ScalarKind::Float,
-        width: 4,
-    },
-};
 
 pub struct ModuleBuilder<'nodes> {
     nodes: &'nodes dyn NodeBuilder,
@@ -144,6 +86,7 @@ impl<'nodes> ModuleBuilder<'nodes> {
         FunctionBuilder {
             module: self,
             function: Function::default(),
+            typifier: Typifier::default(),
         }
     }
 }
@@ -151,9 +94,19 @@ impl<'nodes> ModuleBuilder<'nodes> {
 pub struct FunctionBuilder<'a, 'nodes> {
     module: &'a mut ModuleBuilder<'nodes>,
     function: Function,
+    typifier: Typifier,
 }
 
 impl<'a, 'nodes> FunctionBuilder<'a, 'nodes> {
+    pub fn extract_type(&mut self, expr: Handle<Expression>) -> Result<&TypeInner, ResolveError> {
+        self::types::extract_type(
+            &mut self.typifier,
+            &self.module.module,
+            &self.function,
+            expr,
+        )
+    }
+
     pub fn node(&mut self, port: Output) -> Option<Handle<Expression>> {
         self.module.nodes.expr(self, port)
     }
@@ -231,14 +184,8 @@ pub fn example_naga() {
     }));
 
     let _master = nodes.insert(Box::new(crate::node::master::Master {
-        position: Some(Output {
-            node: triangle,
-            port: PortId(0),
-        }),
-        color: Some(Output {
-            node: color,
-            port: PortId(0),
-        }),
+        position: Some(Output::new(triangle, PortId(0))),
+        color: Some(Output::new(color, PortId(0))),
     }));
 
     for (_, node) in nodes.iter() {
@@ -251,13 +198,14 @@ pub fn example_naga() {
         }
     }
 
-    if false {
+    if true {
+        println!("\n-------------------\n");
         let source = r#"
-        fn lol() {
-            let a = vec4<f32>(1.0);
-            //let b = a.ww;
-            let c = a.w;
-        }
+fn lol() {
+    let a = vec2<f32>(1.0, 2.0);
+    let x = vec4<f32>(a, 0.0, 0.0);
+    let y = vec2<f32>(x);
+}
         "#;
         let module = ModuleBuilder::from_wgsl(&nodes, source).unwrap();
         println!("{:#?}", module.module);

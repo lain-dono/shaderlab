@@ -1,30 +1,19 @@
 use iced_wgpu::Renderer;
 use iced_winit::{
-    alignment, button, scrollable, slider, {Alignment, Command, Element, Program},
-    {Button, Column, Container, Row, Rule, Scrollable, Slider, Text},
-    {Color, Length, Point, Rectangle},
+    alignment, button, scrollable, Alignment, Button, Column, Command, Container, Element, Length,
+    Point, Program, Rectangle, Row, Rule, Scrollable, Text,
 };
-use slotmap::SlotMap;
 
-pub mod edge;
-pub mod node;
-pub mod port;
 pub mod swizzle;
 pub mod workspace;
 
-pub use self::{
-    edge::{Edge, Pending, PortId},
-    node::NodeWidget,
-    port::Port,
-    workspace::Workspace,
-};
-use crate::node::NodeId;
+use self::workspace::Workspace;
+use crate::node::{BoxedNode as _, Message as NodeMessage, Node, NodeId, NodeMap, NodeWidget};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Background(Color),
-    AddNode(fn() -> Box<dyn crate::node::Node>),
-    Workspace(node::Message),
+    AddNode(fn() -> Box<dyn Node>),
+    Workspace(NodeMessage),
 
     Fix(NodeId),
 
@@ -39,13 +28,8 @@ pub enum Message {
 #[derive(Default)]
 pub struct Controls {
     source: String,
-    background_color: Color,
-    sliders: [slider::State; 3],
 
     workspace: workspace::State,
-    drag: Option<NodeId>,
-    drag_last: Point,
-
     scrollable: scrollable::State,
     save: button::State,
     swizzle: swizzle::State,
@@ -54,18 +38,14 @@ pub struct Controls {
 impl Controls {
     pub fn new() -> Self {
         Self {
-            source: "    return vec4<f32>(0.02, 0.02, 0.02, 1.0);\n".to_string(),
-            background_color: Color::BLACK,
             workspace: workspace::State::with_nodes({
-                use crate::node::BoxedNode;
-
                 let color_a = crate::node::input::Color::boxed();
                 let color_b = crate::node::input::Color::boxed();
                 let triangle = crate::node::input::Triangle::boxed();
                 let add = crate::node::math::Add::boxed();
                 let master = crate::node::master::Master::boxed();
 
-                let mut nodes = SlotMap::with_key();
+                let mut nodes = NodeMap::default();
                 nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(50.0, 100.0), color_a));
                 nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(50.0, 300.0), color_b));
                 nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(300.0, 100.0), triangle));
@@ -73,19 +53,14 @@ impl Controls {
                 nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(500.0, 100.0), master));
                 nodes
             }),
-            drag: None,
-            drag_last: Point::ORIGIN,
             ..Default::default()
         }
-    }
-
-    pub fn background_color(&self) -> Color {
-        self.background_color
     }
 
     pub fn workspace(&self) -> Rectangle {
         self.workspace.bounds()
     }
+
     pub fn source(&self) -> &str {
         &self.source
     }
@@ -102,7 +77,7 @@ impl Program for Controls {
 
         match message {
             Message::Save => {
-                let shader = crate::scene::Scene::wrap(&self.source);
+                let shader = self.source.clone();
                 std::thread::spawn(|| {
                     use native_dialog::FileDialog;
                     let path = FileDialog::new()
@@ -134,47 +109,46 @@ impl Program for Controls {
                 });
             }
             Message::Fix(node) => self.workspace.fix_node_position(node),
-            Message::Background(color) => self.background_color = color,
 
             Message::AddNode(node) => self.workspace.add_node(node()),
             Message::Workspace(message) => match message {
-                node::Message::Remove(node) => self.workspace.remove_node(node),
-                node::Message::Dynamic(node, message) => {
+                NodeMessage::Remove(node) => self.workspace.remove_node(node),
+                NodeMessage::Dynamic(node, message) => {
                     self.workspace.update_node(node, message);
                     if let Some(source) = self.workspace.try_traverse() {
                         self.source = source;
                     }
                 }
-                node::Message::DragStart(node) => {
+                NodeMessage::DragStart(node) => {
                     log::info!("start drag");
-                    self.drag = Some(node);
+                    self.workspace.drag = Some(node);
                     self.workspace.fix_node_position(node);
                 }
-                node::Message::DragMove(position) => {
-                    let delta = position - self.drag_last;
-                    self.drag_last = position;
-                    if let Some(id) = self.drag {
+                NodeMessage::DragMove(position) => {
+                    let delta = position - self.workspace.drag_last;
+                    self.workspace.drag_last = position;
+                    if let Some(id) = self.workspace.drag {
                         self.workspace.move_node(id, delta);
                         return next_frame(Message::Fix(id));
                     }
                 }
-                node::Message::DragEnd(node) => {
+                NodeMessage::DragEnd(node) => {
                     log::info!("end drag");
-                    self.drag = None;
+                    self.workspace.drag = None;
                     self.workspace.fix_node_position(node);
                     return next_frame(Message::Fix(node));
                 }
-                node::Message::StartEdge(from) => {
+                NodeMessage::StartEdge(from) => {
                     self.workspace.start_edge(from);
                     if let Some(source) = self.workspace.try_traverse() {
                         self.source = source;
                     }
                 }
-                node::Message::CancelEdge => {
+                NodeMessage::CancelEdge => {
                     log::info!("cancel edge creation");
                     self.workspace.end();
                     self.workspace.request_redraw();
-                    self.drag = None;
+                    self.workspace.drag = None;
                 }
             },
 
@@ -197,36 +171,9 @@ impl Program for Controls {
     }
 
     fn view(&mut self) -> Element<Message, Renderer> {
-        let sliders = rgb_sliders(&mut self.sliders, self.background_color);
-
-        let _sidebar = Column::new()
-            .padding(10)
-            .spacing(10)
-            .push(Text::new("Background color").color(Color::WHITE))
-            .push(sliders)
-            .push(
-                Text::new(format!("{:#?}", self.background_color))
-                    .size(14)
-                    .color(Color::WHITE),
-            );
-
         let content = Workspace::new(&mut self.workspace);
         let content: Element<_, _> = content.into();
         let content = content.map(Message::Workspace);
-
-        /*
-        let scroll_to_bottom = Text::new("Scroll to bottom");
-        let scroll_to_bottom = Button::new(&mut self.scroll_to_bottom, scroll_to_bottom)
-            .width(Length::Fill)
-            .padding(2)
-            .on_press(Message::ScrollToBottom);
-
-        let scroll_to_top = Text::new("Scroll to top");
-        let scroll_to_top = Button::new(&mut self.scroll_to_top, scroll_to_top)
-            .width(Length::Fill)
-            .padding(2)
-            .on_press(Message::ScrollToTop);
-            */
 
         let scrollable = Scrollable::new(&mut self.scrollable)
             .padding(0)
@@ -237,14 +184,6 @@ impl Program for Controls {
             .scroller_width(0);
 
         let sidebar = node_list(scrollable);
-
-        /*
-        let sidebar = sidebar
-            .push(scroll_to_bottom);
-            .push(sidebar)
-            .push(Text::new("The End."))
-            .push(scroll_to_top);
-            */
 
         let sidebar = Column::new()
             .push(sidebar)
@@ -266,6 +205,7 @@ impl Program for Controls {
     }
 }
 
+/*
 fn rgb_sliders(sliders: &mut [slider::State; 3], color: Color) -> Element<Message, Renderer> {
     let [r, g, b] = sliders;
 
@@ -287,11 +227,10 @@ fn rgba_sliders(sliders: &mut [slider::State; 4], color: Color) -> Element<Messa
 
     Element::from(Column::new().push(r).push(g).push(b).push(a)).map(Message::Background)
 }
+*/
 
 fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, Renderer> {
-    use crate::node::BoxedNode;
-
-    type Desc<'a> = [(&'a str, fn() -> Box<dyn crate::node::Node>)];
+    type Desc<'a> = [(&'a str, fn() -> Box<dyn Node>)];
 
     trait ExtScrollable: Sized {
         fn header(self, label: &str) -> Self;
@@ -299,7 +238,6 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
         fn item(self, label: &str) -> Self;
         fn divider(self) -> Self;
 
-        fn row(self, labels: &[&str]) -> Self;
         fn rowx(self, items: &Desc) -> Self;
     }
 
@@ -334,25 +272,6 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
             self.push(Rule::horizontal(8))
         }
 
-        fn row(self, labels: &[&str]) -> Self {
-            use crate::widget::press_pad::PressPad;
-            let row = Row::new()
-                .width(Length::Fill)
-                .padding([0, 0, 0, 16])
-                .spacing(8);
-            let row = labels.iter().fold(row, |row, &label| {
-                let text = Text::new(label)
-                    .size(14)
-                    .horizontal_alignment(alignment::Horizontal::Left);
-                row.push(PressPad::new(
-                    text,
-                    Message::AddNode(crate::node::math::Abs::boxed),
-                ))
-            });
-
-            self.push(row)
-        }
-
         fn rowx(self, items: &Desc) -> Self {
             use crate::widget::press_pad::PressPad;
             let row = Row::new()
@@ -365,7 +284,6 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
                     .horizontal_alignment(alignment::Horizontal::Left);
                 row.push(PressPad::new(text, Message::AddNode(create)))
             });
-
             self.push(row)
         }
     }

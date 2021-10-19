@@ -1,76 +1,59 @@
-use crate::node::NodeId;
+use crate::node::{NodeId, PortId};
 use iced_graphics::canvas::{Cursor, Frame, Geometry, Path, Stroke};
 use iced_winit::{Point, Rectangle, Vector};
-use slotmap::Key as _;
-use std::fmt;
+use std::{fmt, marker::PhantomData};
 
-#[derive(Copy, Clone, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
-pub struct PortId(pub usize);
-
-impl ToString for PortId {
-    fn to_string(&self) -> String {
-        self.0.to_string()
-    }
-}
-
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub struct Input {
-    pub node: NodeId,
-    pub port: PortId,
-}
-
-impl Input {
-    pub fn new(node: NodeId, port: PortId) -> Self {
-        Self { node, port }
-    }
-}
-
-impl fmt::Display for Input {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Input({} {})",
-            self.node.to_string(),
-            self.port.to_string()
-        )
-    }
-}
-
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub struct Output {
-    pub node: NodeId,
-    pub port: PortId,
-}
-
-impl Output {
-    pub fn new(node: NodeId, port: PortId) -> Self {
-        Self { node, port }
-    }
-}
-
-impl fmt::Display for Output {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Output({} {})",
-            self.node.to_string(),
-            self.port.to_string()
-        )
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Connection {
+#[derive(Clone, Copy, Default, Debug)]
+pub struct Slot<T> {
     node: NodeId,
     port: PortId,
     position: Point,
+    marker: PhantomData<T>,
 }
 
-impl fmt::Display for Connection {
+impl<T> PartialEq for Slot<T> {
+    fn eq(&self, other: &Self) -> bool {
+        (self.node, self.port) == (other.node, other.port)
+    }
+}
+
+impl<T> Slot<T> {
+    #[inline]
+    pub const fn new(node: NodeId, port: PortId) -> Self {
+        Self {
+            node,
+            port,
+            position: Point::ORIGIN,
+            marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn position(position: Point) -> Self {
+        Self {
+            node: NodeId::default(),
+            port: PortId(usize::MAX),
+            position,
+            marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub const fn node(&self) -> NodeId {
+        self.node
+    }
+
+    #[inline]
+    pub const fn port(&self) -> PortId {
+        self.port
+    }
+}
+
+impl fmt::Display for Slot<OutputMarker> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "({}::{} {}x{})",
+            "Output({}::{} {}x{})",
             self.node.to_string(),
             self.port.to_string(),
             self.position.x,
@@ -79,20 +62,40 @@ impl fmt::Display for Connection {
     }
 }
 
-impl Connection {
-    const fn new(node: NodeId, port: PortId, position: Point) -> Self {
-        Self {
-            node,
-            port,
-            position,
-        }
+impl fmt::Display for Slot<InputMarker> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Input({}::{} {}x{})",
+            self.node.to_string(),
+            self.port.to_string(),
+            self.position.x,
+            self.position.y
+        )
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct InputMarker;
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct OutputMarker;
+
+pub type Input = Slot<InputMarker>;
+pub type Output = Slot<OutputMarker>;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Edge {
-    output: Connection,
-    input: Connection,
+    output: Output,
+    input: Input,
+}
+
+impl fmt::Display for Edge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Edge {{ {} -> {} }}", self.output, self.input,)
+    }
 }
 
 impl Edge {
@@ -105,17 +108,11 @@ impl Edge {
     }
 
     pub fn input(&self) -> Input {
-        Input {
-            node: self.input.node,
-            port: self.input.port,
-        }
+        self.input
     }
 
     pub fn output(&self) -> Output {
-        Output {
-            node: self.output.node,
-            port: self.output.port,
-        }
+        self.output
     }
 
     pub fn set_input_position(&mut self, position: Point) {
@@ -131,18 +128,14 @@ impl Edge {
     }
 
     pub fn eq_node_port(&self, other: &Self) -> bool {
-        self.input() == other.input() && self.output() == other.output()
+        self == other
     }
 
     pub fn has_node(&self, node: NodeId) -> bool {
         self.output.node == node || self.input.node == node
     }
 
-    pub fn draw(self, frame: &mut Frame) {
-        Self::draw_all(&[self], frame);
-    }
-
-    pub fn draw_all(curves: &[Self], frame: &mut Frame) {
+    pub fn draw(frame: &mut Frame, curves: &[Self]) {
         let curves = Path::new(|p| {
             for curve in curves {
                 let (from, to) = (curve.output.position, curve.input.position);
@@ -158,15 +151,15 @@ impl Edge {
             &curves,
             Stroke::default()
                 .with_color(crate::style::PORT_COLOR)
-                .with_width(1.0),
+                .with_width(1.5),
         );
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Pending {
-    Input(Connection),
-    Output(Connection),
+    Input(Slot<InputMarker>),
+    Output(Slot<OutputMarker>),
 }
 
 impl fmt::Display for Pending {
@@ -180,16 +173,17 @@ impl fmt::Display for Pending {
 
 impl Pending {
     pub fn input(node: NodeId, port: PortId) -> Self {
-        Self::Input(Connection::new(node, port, Point::ORIGIN))
+        Self::Input(Slot::new(node, port))
     }
 
     pub fn output(node: NodeId, port: PortId) -> Self {
-        Self::Output(Connection::new(node, port, Point::ORIGIN))
+        Self::Output(Slot::new(node, port))
     }
 
     pub fn translate(mut self, offset: Vector) -> Self {
         match &mut self {
-            Self::Input(conn) | Self::Output(conn) => conn.position = conn.position + offset,
+            Self::Input(conn) => conn.position = conn.position + offset,
+            Self::Output(conn) => conn.position = conn.position + offset,
         }
         self
     }
@@ -206,18 +200,17 @@ impl Pending {
         let mut frame = Frame::new(bounds.size());
 
         if let Some(to) = cursor.position_in(&bounds) {
-            let to = Connection::new(NodeId::null(), PortId(usize::MAX), to);
-            match self {
-                Self::Input(from) => Edge {
-                    output: to,
-                    input: from,
+            let edge = match self {
+                Self::Input(input) => Edge {
+                    output: Slot::position(to),
+                    input,
                 },
-                Self::Output(from) => Edge {
-                    output: from,
-                    input: to,
+                Self::Output(output) => Edge {
+                    output,
+                    input: Slot::position(to),
                 },
-            }
-            .draw(&mut frame)
+            };
+            Edge::draw(&mut frame, &[edge])
         }
 
         frame.into_geometry()

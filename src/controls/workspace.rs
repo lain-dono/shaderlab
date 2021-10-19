@@ -1,9 +1,6 @@
-use crate::controls::{
-    edge::{Input, Output},
-    node::{Message, NodeMap, NodeWidget},
-    Edge, Pending, PortId,
+use crate::node::{
+    self, Edge, Input, Message, Node, NodeId, NodeMap, NodeWidget, Output, Pending, PortId,
 };
-use crate::node::{Node, NodeId};
 use iced_graphics::canvas::{self, Canvas, Cursor, Frame, Geometry};
 use iced_graphics::{Defaults, Primitive};
 use iced_native::{
@@ -22,23 +19,28 @@ pub fn fix_name(s: &str) -> String {
 #[derive(Default)]
 pub struct State {
     bounds: Cell<Rectangle>,
-    pending: Option<Pending>,
     cache: canvas::Cache,
 
     nodes: NodeMap,
     edges: Vec<Edge>,
+
+    pending: Option<Pending>,
+    pub drag: Option<NodeId>,
+    pub drag_last: Point,
 }
 
 impl State {
     pub fn with_nodes(nodes: NodeMap) -> Self {
         Self {
             nodes,
+            drag: None,
+            drag_last: Point::ORIGIN,
             ..Self::default()
         }
     }
 
     pub fn update_node(&mut self, node: NodeId, message: Box<dyn crate::node::DynMessage>) {
-        self.nodes[node].node.update(node, message);
+        self.nodes[node].event(node::Event::Dynamic(message));
     }
 
     pub fn add_node(&mut self, node: Box<dyn Node>) {
@@ -54,8 +56,8 @@ impl State {
         let removed = self.edges.iter().filter(|edge| edge.has_node(node));
 
         for &edge in removed {
-            self.nodes[edge.input().node].node.remove_edge(edge, true);
-            self.nodes[edge.output().node].node.remove_edge(edge, false);
+            self.nodes[edge.input()].event(node::Event::Input(edge.input().port(), None));
+            self.nodes[edge.output()].event(node::Event::Output(edge.output().port(), None));
         }
 
         self.edges.retain(|edge| !edge.has_node(node));
@@ -68,22 +70,27 @@ impl State {
         let base_offset = Point::ORIGIN - self.bounds().position();
         let from = from.translate(base_offset);
 
-        if let Some(to) = self.pending() {
+        if let Some(to) = self.pending {
             if let Some(edge) = Edge::new(from, to).filter(Edge::not_same_node) {
                 if let Some(index) = self.edges.iter().position(|e| e.eq_node_port(&edge)) {
-                    log::info!("remove edge {} -> {}", edge.output(), edge.input());
+                    log::info!("remove {}", edge);
                     self.edges.remove(index);
-                    self.nodes[edge.input().node].node.remove_edge(edge, true);
-                    self.nodes[edge.output().node].node.remove_edge(edge, false);
-                // only one edge for input port
-                // and not cycle
+                    self.nodes[edge.input()].event(node::Event::Input(edge.input().port(), None));
+                    self.nodes[edge.output()]
+                        .event(node::Event::Output(edge.output().port(), None));
+                // only one edge for input port and not cycle
                 } else if self.edges.iter().all(|e| e.input() != edge.input())
-                    && self.check_add(edge)
+                    && self.find_cycle(edge)
                 {
-                    log::info!("create edge {} -> {}", edge.output(), edge.input());
+                    log::info!("create {}", edge);
                     self.edges.push(edge);
-                    self.nodes[edge.input().node].node.add_edge(edge, true);
-                    self.nodes[edge.output().node].node.add_edge(edge, false);
+
+                    self.nodes[edge.input()]
+                        .event(node::Event::Input(edge.input().port(), Some(edge.output())));
+                    self.nodes[edge.output()].event(node::Event::Output(
+                        edge.output().port(),
+                        Some(edge.input()),
+                    ));
                 }
             }
 
@@ -91,7 +98,7 @@ impl State {
             self.request_redraw();
         } else {
             log::info!("start {}", from);
-            self.start(from);
+            self.pending = Some(from);
         }
     }
 
@@ -101,13 +108,13 @@ impl State {
         self.fix_node_position(id);
     }
 
-    pub fn check_add(&self, edge: Edge) -> bool {
+    fn find_cycle(&self, edge: Edge) -> bool {
         let mut graph = crate::graph::Graph::default();
         for edge in &self.edges {
-            graph.add_edge(edge.output().node, edge.input().node);
+            graph.add_edge(edge.output().node(), edge.input().node());
         }
-        graph.add_edge(edge.output().node, edge.input().node);
-        !graph.is_reachable(edge.input().node, edge.output().node)
+        graph.add_edge(edge.output().node(), edge.input().node());
+        !graph.is_reachable(edge.input().node(), edge.output().node())
     }
 
     pub fn fix_node_position(&mut self, node: NodeId) {
@@ -142,8 +149,6 @@ impl State {
     }
 
     pub fn try_traverse(&mut self) -> Option<String> {
-        log::info!("try generate");
-
         let module = self
             .nodes
             .values()
@@ -168,14 +173,6 @@ impl State {
 
     pub fn request_redraw(&mut self) {
         self.cache.clear()
-    }
-
-    pub fn pending(&self) -> Option<Pending> {
-        self.pending
-    }
-
-    pub fn start(&mut self, pending: Pending) {
-        self.pending = Some(pending);
     }
 
     pub fn end(&mut self) -> Option<Pending> {
@@ -351,7 +348,13 @@ impl<'a> Widget<Message, Renderer> for Workspace<'a> {
 
                 mouse_interaction = mouse_interaction.max(new_mouse_interaction);
 
-                primitive
+                let primitives = vec![primitive];
+
+                Primitive::Clip {
+                    bounds,
+                    offset: Default::default(),
+                    content: Box::new(Primitive::Group { primitives }),
+                }
             }))
             .collect();
 
@@ -417,7 +420,7 @@ impl<'a> canvas::Program<Message> for Bezier<'a> {
 
     fn draw(&self, bounds: Rectangle, cursor: Cursor) -> Vec<Geometry> {
         let content = self.cache.draw(bounds.size(), |frame: &mut Frame| {
-            Edge::draw_all(self.curves, frame)
+            Edge::draw(frame, self.curves)
         });
 
         if let Some(pending) = &self.pending {

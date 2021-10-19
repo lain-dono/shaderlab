@@ -78,7 +78,7 @@ impl<T: Emit> Emit for [T; 2] {
     fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         let components = vec![self[0].emit(function), self[1].emit(function)];
         let mut ifier = Typifier::new();
-        let ty = super::extract::extract_type(
+        let ty = super::types::extract_type(
             &mut ifier,
             &function.module.module,
             &function.function,
@@ -106,7 +106,7 @@ impl<T: Emit> Emit for [T; 3] {
             self[2].emit(function),
         ];
         let mut ifier = Typifier::new();
-        let ty = super::extract::extract_type(
+        let ty = super::types::extract_type(
             &mut ifier,
             &function.module.module,
             &function.function,
@@ -135,7 +135,7 @@ impl<T: Emit> Emit for [T; 4] {
             self[3].emit(function),
         ];
         let mut ifier = Typifier::new();
-        let ty = super::extract::extract_type(
+        let ty = super::types::extract_type(
             &mut ifier,
             &function.module.module,
             &function.function,
