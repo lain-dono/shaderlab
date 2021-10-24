@@ -43,6 +43,10 @@ impl State {
         self.nodes[node].event(node::Event::Dynamic(message));
     }
 
+    pub fn set_port_default(&mut self, node: NodeId, port: PortId, value: [f64; 4]) {
+        self.nodes[node].set_port_default(port, value)
+    }
+
     pub fn add_node(&mut self, node: Box<dyn Node>) {
         log::info!("add node {:?}", node);
         let bounds = self.bounds();
@@ -56,8 +60,8 @@ impl State {
         let removed = self.edges.iter().filter(|edge| edge.has_node(node));
 
         for &edge in removed {
-            self.nodes[edge.input()].event(node::Event::Input(edge.input().port(), None));
-            self.nodes[edge.output()].event(node::Event::Output(edge.output().port(), None));
+            self.nodes[edge.input()].event(node::Event::AttachInput(edge.input().port(), None));
+            self.nodes[edge.output()].event(node::Event::AttachOutput(edge.output().port(), None));
         }
 
         self.edges.retain(|edge| !edge.has_node(node));
@@ -75,9 +79,10 @@ impl State {
                 if let Some(index) = self.edges.iter().position(|e| e.eq_node_port(&edge)) {
                     log::info!("remove {}", edge);
                     self.edges.remove(index);
-                    self.nodes[edge.input()].event(node::Event::Input(edge.input().port(), None));
+                    self.nodes[edge.input()]
+                        .event(node::Event::AttachInput(edge.input().port(), None));
                     self.nodes[edge.output()]
-                        .event(node::Event::Output(edge.output().port(), None));
+                        .event(node::Event::AttachOutput(edge.output().port(), None));
                 // only one edge for input port and not cycle
                 } else if self.edges.iter().all(|e| e.input() != edge.input())
                     && self.find_cycle(edge)
@@ -85,9 +90,11 @@ impl State {
                     log::info!("create {}", edge);
                     self.edges.push(edge);
 
-                    self.nodes[edge.input()]
-                        .event(node::Event::Input(edge.input().port(), Some(edge.output())));
-                    self.nodes[edge.output()].event(node::Event::Output(
+                    self.nodes[edge.input()].event(node::Event::AttachInput(
+                        edge.input().port(),
+                        Some(edge.output()),
+                    ));
+                    self.nodes[edge.output()].event(node::Event::AttachOutput(
                         edge.output().port(),
                         Some(edge.input()),
                     ));
@@ -104,7 +111,7 @@ impl State {
 
     pub fn move_node(&mut self, id: NodeId, delta: Vector) {
         let node = &mut self.nodes[id];
-        node.position = node.position + delta;
+        node.set_position(node.position() + delta);
         self.fix_node_position(id);
     }
 
@@ -127,19 +134,19 @@ impl State {
             return;
         };
 
-        for (port, input) in node.inputs.iter().enumerate() {
+        for (port, input) in node.inputs() {
             let position = input.slot();
             for edge in &mut self.edges {
-                if edge.input() == Input::new(node.id, PortId(port)) {
+                if edge.input() == Input::new(node.id(), port) {
                     edge.set_input_position(position + base_offset);
                 }
             }
         }
 
-        for (port, output) in node.outputs.iter().enumerate() {
+        for (port, output) in node.outputs() {
             let position = output.slot();
             for edge in &mut self.edges {
-                if edge.output() == Output::new(node.id, PortId(port)) {
+                if edge.output() == Output::new(node.id(), port) {
                     edge.set_output_position(position + base_offset);
                 }
             }
@@ -152,7 +159,7 @@ impl State {
         let module = self
             .nodes
             .values()
-            .find_map(|node| node.node.downcast_ref::<crate::node::master::Master>())
+            .find_map(|node| node.downcast_ref::<crate::node::master::Master>())
             .and_then(|master| master.entry(&self.nodes));
 
         if let Some(module) = module {
@@ -208,9 +215,9 @@ impl<'a> Workspace<'a> {
         let children = state
             .nodes
             .values_mut()
-            .map(|state| Item {
-                position: state.position,
-                widget: state.widget(),
+            .map(|node| Item {
+                position: node.position(),
+                widget: node.widget(),
             })
             .collect();
 

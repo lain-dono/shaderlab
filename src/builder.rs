@@ -179,9 +179,7 @@ pub fn example_naga() {
     let mut nodes: slotmap::SlotMap<crate::node::NodeId, Node> = slotmap::SlotMap::default();
 
     let triangle = nodes.insert(Box::new(crate::node::input::Triangle));
-    let color = nodes.insert(Box::new(crate::node::input::Vec4 {
-        value: [0.1, 0.2, 0.3, 0.4],
-    }));
+    let color = nodes.insert(Box::new([0.1f64, 0.2, 0.3, 0.4]));
 
     let _master = nodes.insert(Box::new(crate::node::master::Master {
         position: Some(Output::new(triangle, PortId(0))),

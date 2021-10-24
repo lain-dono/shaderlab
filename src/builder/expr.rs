@@ -74,6 +74,12 @@ impl Emit for ScalarValue {
     }
 }
 
+impl Emit for [f64; 1] {
+    fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
+        self[0].emit(function)
+    }
+}
+
 impl<T: Emit> Emit for [T; 2] {
     fn emit(&self, function: &mut FunctionBuilder) -> Handle<Expression> {
         let components = vec![self[0].emit(function), self[1].emit(function)];

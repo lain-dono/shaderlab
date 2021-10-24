@@ -18,13 +18,13 @@ impl ToString for PortId {
     }
 }
 
-pub struct PortState {
-    label: String,
-    is_pressed: bool,
-    slot: Cell<Point>,
+pub struct State {
+    pub label: String,
+    pub is_pressed: Cell<bool>,
+    pub slot: Cell<Point>,
 }
 
-impl PortState {
+impl State {
     pub fn slot(&self) -> Point {
         self.slot.get()
     }
@@ -32,32 +32,30 @@ impl PortState {
     pub fn new(label: impl ToString) -> Self {
         Self {
             label: label.to_string(),
-            is_pressed: false,
+            is_pressed: Default::default(),
             slot: Default::default(),
         }
     }
 
-    pub fn view(&mut self, on_press: Pending) -> Element<Message, Renderer> {
+    pub fn view(&self, on_press: Pending, is_set: bool) -> Element<Message, Renderer> {
         let on_press = on_press.translate(self.slot.get() - Point::ORIGIN);
 
         Element::new(Widget {
-            is_pressed: &mut self.is_pressed,
-            slot: &self.slot,
-            content: &self.label,
+            state: self,
             on_press: Message::StartEdge(on_press),
             is_input: on_press.is_input(),
             size: style::FONT_SIZE,
+            is_set,
         })
     }
 }
 
 struct Widget<'a, Message> {
-    is_pressed: &'a mut bool,
-    slot: &'a Cell<Point>,
-    content: &'a str,
+    state: &'a State,
     on_press: Message,
     is_input: bool,
     size: u16,
+    is_set: bool,
 }
 
 impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, Message> {
@@ -73,7 +71,7 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
         let limits = limits.width(self.width()).height(self.height());
 
         let (width, height) = renderer.backend().measure(
-            self.content,
+            &self.state.label,
             f32::from(self.size),
             Default::default(),
             limits.max(),
@@ -103,20 +101,20 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
             },
             bounds.y + bounds.height / 2.0,
         );
-        self.slot.set(center);
+        self.state.slot.set(center);
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
                 if bounds.contains(cursor_position) {
-                    *self.is_pressed = true;
+                    self.state.is_pressed.set(true);
                     return event::Status::Captured;
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. }) => {
-                if *self.is_pressed {
-                    *self.is_pressed = false;
+                if self.state.is_pressed.get() {
+                    self.state.is_pressed.set(false);
 
                     if bounds.contains(cursor_position) {
                         messages.push(self.on_press.clone());
@@ -125,7 +123,7 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
                     return event::Status::Captured;
                 }
             }
-            Event::Touch(touch::Event::FingerLost { .. }) => *self.is_pressed = false,
+            Event::Touch(touch::Event::FingerLost { .. }) => self.state.is_pressed.set(false),
             _ => {}
         }
 
@@ -158,7 +156,7 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
             },
             bounds.y + bounds.height / 2.0,
         );
-        self.slot.set(center);
+        self.state.slot.set(center);
 
         let pad = 3.5;
         let pad_set = 1.5;
@@ -179,8 +177,6 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
             border_color,
         };
 
-        let is_set = !is_hover;
-
         let slot_set = Primitive::Quad {
             bounds: Rectangle {
                 x: center.x - pad_set,
@@ -188,7 +184,7 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
                 width: pad_set * 2.0,
                 height: pad_set * 2.0,
             },
-            background: if is_set {
+            background: if self.is_set {
                 border_color.into()
             } else {
                 background.into()
@@ -199,7 +195,7 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
         };
 
         let label = Primitive::Text {
-            content: self.content.to_string(),
+            content: self.state.label.to_string(),
             size: f32::from(self.size),
             bounds: Rectangle {
                 x: if self.is_input {

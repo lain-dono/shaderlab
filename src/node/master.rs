@@ -98,8 +98,8 @@ impl Node for Master {
 
     fn update(&mut self, event: Event) {
         match event {
-            Event::Input(PortId(0), remote) => self.position = remote,
-            Event::Input(PortId(1), remote) => self.color = remote,
+            Event::AttachInput(PortId(0), remote) => self.position = remote,
+            Event::AttachInput(PortId(1), remote) => self.color = remote,
             _ => (),
         }
     }

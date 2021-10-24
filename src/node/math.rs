@@ -2,8 +2,7 @@ use crate::builder::{FunctionBuilder, NodeBuilder};
 use crate::node::{Event, Node, NodeDescriptor, Output, PortId};
 use arrayvec::ArrayVec;
 use naga::{
-    BinaryOperator, Expression, Handle, MathFunction, ScalarKind, SwizzleComponent, UnaryOperator,
-    VectorSize,
+    BinaryOperator, Expression, Handle, MathFunction, SwizzleComponent, UnaryOperator, VectorSize,
 };
 
 pub struct Math {
@@ -79,7 +78,7 @@ macro_rules! emit_binary {
 
             fn update(&mut self, event: Event) {
                 match event {
-                    Event::Input(PortId(port), remote) => self.0[port] = remote,
+                    Event::AttachInput(PortId(port), remote) => self.0[port] = remote,
                     _ => (),
                 }
             }
@@ -128,7 +127,7 @@ macro_rules! emit_unary {
 
             fn update(&mut self, event: Event) {
                 match event {
-                    Event::Input(PortId(0), remote) => self.0 = remote,
+                    Event::AttachInput(PortId(0), remote) => self.0 = remote,
                     _ => (),
                 }
             }
@@ -190,56 +189,10 @@ impl NodeBuilder for Swizzle {
     }
 }
 
-#[derive(Debug, Clone)]
-struct ChangeType(Type);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Type {
-    F32,
-    V2F,
-    V3F,
-    V4F,
-}
-
-impl From<Type> for super::Type {
-    fn from(ty: Type) -> Self {
-        match ty {
-            Type::F32 => Self::Scalar(ScalarKind::Float),
-            Type::V2F => Self::Vector(ScalarKind::Float, VectorSize::Bi),
-            Type::V3F => Self::Vector(ScalarKind::Float, VectorSize::Tri),
-            Type::V4F => Self::Vector(ScalarKind::Float, VectorSize::Quad),
-        }
-    }
-}
-
-impl ToString for Type {
-    fn to_string(&self) -> String {
-        match self {
-            Self::F32 => "f32",
-            Self::V2F => "v2f",
-            Self::V3F => "v3f",
-            Self::V4F => "v4f",
-        }
-        .to_string()
-    }
-}
-
 macro_rules! custom {
     ($name:ident :: $fn:ident ($($arg:ident),+) -> $ret:ident ($format:literal, $($arg_expr:expr),+)) => {
-        #[derive(Clone, Debug)]
-        pub struct $name {
-            //ty_select: pick_list::State<Type>,
-            //selected: Option<Type>
-        }
-
-        impl Default for $name {
-            fn default() -> Self {
-                Self {
-                    //ty_select: pick_list::State::default(),
-                    //selected: Some(Type::V4F),
-                }
-            }
-        }
+        #[derive(Clone, Debug, Default)]
+        pub struct $name;
 
         impl NodeBuilder for $name {
             fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>> {
@@ -256,22 +209,6 @@ macro_rules! custom {
                     outputs: &[(stringify!($ret), super::Type::V4F)]
                 }
             }
-
-            /*
-            fn update(&mut self, _node: NodeId, message: Message) {
-                let message  = super::downcast_message::<ChangeType>(message).unwrap();
-                self.selected = Some(message.0);
-            }
-
-            fn view(&mut self, _node: NodeId) -> Element<Message, Renderer> {
-                let variants = &[Type::F32, Type::V2F, Type::V3F, Type::V4F][..];
-                pick_list::PickList::new(&mut self.ty_select, variants, self.selected, move |x| super::upcast_message(ChangeType(x)))
-                    .padding([0, 4])
-                    .text_size(crate::style::FONT_SIZE)
-                    .width(IcedLength::Fill)
-                    .into()
-            }
-            */
         }
     };
 }

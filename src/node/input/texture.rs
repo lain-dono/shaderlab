@@ -1,0 +1,11 @@
+pub struct CubemapAsset;
+pub struct SampleCubemap;
+pub struct SampleTexture2D;
+pub struct SampleTexture2DArray;
+pub struct SampleTexture2DLOD;
+pub struct SampleTexture3D;
+pub struct SamplerState;
+pub struct TexelSize;
+pub struct Texture2DArrayAsset;
+pub struct Texture2DAsset;
+pub struct Texture3DAsset;

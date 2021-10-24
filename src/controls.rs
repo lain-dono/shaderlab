@@ -119,6 +119,9 @@ impl Program for Controls {
                         self.source = source;
                     }
                 }
+                NodeMessage::SetDefault(node, port, value) => {
+                    self.workspace.set_port_default(node, port, value)
+                }
                 NodeMessage::DragStart(node) => {
                     log::info!("start drag");
                     self.workspace.drag = Some(node);

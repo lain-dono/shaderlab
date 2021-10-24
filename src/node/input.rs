@@ -1,121 +1,52 @@
-pub mod basic {
-    pub struct Boolean;
-    pub struct Color;
-    pub struct Constant;
-    pub struct Scalar;
-    pub struct Slider;
-    pub struct Time;
-    pub struct Vector1;
-    pub struct Vector2;
-    pub struct Vector3;
-    pub struct Vector4;
-}
-
-pub mod geometry {
-    pub struct BitangentVector;
-    pub struct NormalVector;
-    pub struct TangentVector;
-
-    pub struct Position;
-    pub struct ScreenPosition;
-
-    pub struct UV;
-    pub struct VertexColor;
-    pub struct ViewDirection;
-}
-
-pub mod gradient {
-    pub struct Gradient;
-    pub struct SampleGradient;
-}
-
-pub mod matrix {
-    pub struct Matrix2x2;
-    pub struct Matrix3x3;
-    pub struct Matrix4x4;
-    pub struct TransformationMatrix;
-}
-
-pub mod pbr {
-    pub struct DielectricSpecular;
-    pub struct MetalReflectance;
-}
-
-pub mod scene {
-    pub struct Ambient;
-    pub struct Camera;
-    pub struct Fog;
-    pub struct BakedGI;
-    pub struct Object;
-    pub struct ReflectionProbe;
-    pub struct SceneColor;
-    pub struct SceneDepth;
-    pub struct ScreenSize;
-}
-
-pub mod texture {
-    pub struct CubemapAsset;
-    pub struct SampleCubemap;
-    pub struct SampleTexture2D;
-    pub struct SampleTexture2DArray;
-    pub struct SampleTexture2DLOD;
-    pub struct SampleTexture3D;
-    pub struct SamplerState;
-    pub struct TexelSize;
-    pub struct Texture2DArrayAsset;
-    pub struct Texture2DAsset;
-    pub struct Texture3DAsset;
-}
+pub mod basic;
+pub mod geometry;
+pub mod gradient;
+pub mod matrix;
+pub mod pbr;
+pub mod scene;
+pub mod texture;
 
 use crate::builder::{expr::Emit, FunctionBuilder, NodeBuilder};
-use crate::node::{Dynamic, Event, Node, NodeDescriptor, NodeId, Output, PortId};
+use crate::node::{Event, Node, NodeDescriptor, NodeId, NodeView, Output, PortId};
 use crate::style;
 use crate::widget::slider;
 use iced_native::{widget::text_input, Column, Container, Element, Length};
 use iced_wgpu::Renderer;
 use naga::{Expression, Handle};
 
-#[derive(Debug, Default)]
-pub struct Float {
-    pub value: f64,
-}
+pub type Float = f64;
+pub type Vector1 = [f64; 1];
+pub type Vector2 = [f64; 2];
+pub type Vector3 = [f64; 3];
+pub type Vector4 = [f64; 4];
 
 impl NodeBuilder for Float {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port() == PortId(0)).then(|| self.value.emit(function))
+        (output.port() == PortId(0)).then(|| self.emit(function))
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Vec2 {
-    pub value: [f64; 2],
-}
-
-impl NodeBuilder for Vec2 {
+impl NodeBuilder for Vector1 {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port() == PortId(0)).then(|| self.value.emit(function))
+        (output.port() == PortId(0)).then(|| self.emit(function))
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Vec3 {
-    pub value: [f64; 3],
-}
-
-impl NodeBuilder for Vec3 {
+impl NodeBuilder for Vector2 {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port() == PortId(0)).then(|| self.value.emit(function))
+        (output.port() == PortId(0)).then(|| self.emit(function))
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Vec4 {
-    pub value: [f64; 4],
+impl NodeBuilder for Vector3 {
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        (output.port() == PortId(0)).then(|| self.emit(function))
+    }
 }
 
-impl NodeBuilder for Vec4 {
+impl NodeBuilder for Vector4 {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port() == PortId(0)).then(|| self.value.emit(function))
+        (output.port() == PortId(0)).then(|| self.emit(function))
     }
 }
 
@@ -178,7 +109,7 @@ impl NodeBuilder for Fullscreen {
 #[derive(Debug, Default)]
 pub struct Input {
     state: [text_input::State; 4],
-    vector: Vec4,
+    vector: Vector4,
 }
 
 impl NodeBuilder for Input {
@@ -200,16 +131,16 @@ impl Node for Input {
     fn update(&mut self, event: Event) {
         if let Event::Dynamic(message) = event {
             let (index, value) = super::downcast_message::<(usize, f64)>(message).unwrap();
-            self.vector.value[index] = value;
+            self.vector[index] = value;
         }
     }
 
-    fn view(&mut self, _node: NodeId) -> Element<Dynamic, Renderer> {
+    fn view(&mut self, _node: NodeId) -> NodeView {
         let col = Column::new().padding([2, 2]).spacing(2);
 
         self.state
             .iter_mut()
-            .zip(self.vector.value.iter())
+            .zip(self.vector.iter())
             .enumerate()
             .fold(col, |col, (i, (state, value))| {
                 let value = format!("{:?}", *value);
@@ -226,7 +157,7 @@ impl Node for Input {
 pub struct Color {
     sliders: [slider::State; 4],
     color: iced_wgpu::wgpu::Color,
-    vector: Vec4,
+    vector: Vector4,
 }
 
 impl NodeBuilder for Color {
@@ -248,11 +179,11 @@ impl Node for Color {
     fn update(&mut self, event: Event) {
         if let Event::Dynamic(message) = event {
             self.color = super::downcast_message::<iced_wgpu::wgpu::Color>(message).unwrap();
-            self.vector.value = [self.color.r, self.color.g, self.color.b, self.color.a];
+            self.vector = [self.color.r, self.color.g, self.color.b, self.color.a];
         }
     }
 
-    fn view(&mut self, _node: NodeId) -> Element<Dynamic, Renderer> {
+    fn view(&mut self, _node: NodeId) -> NodeView {
         Container::new(rgba_sliders(&mut self.sliders, self.color).map(super::upcast_message))
             .into()
     }
