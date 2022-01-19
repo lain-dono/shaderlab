@@ -27,11 +27,8 @@ pub mod widget;
 
 use crate::{controls::Controls, scene::Scene};
 
-pub fn main() {
+fn main() {
     env_logger::init();
-
-    builder::example_naga();
-    //return;
 
     // Initialize winit
     let event_loop: EventLoop<crate::controls::Message> = EventLoop::with_user_event();
@@ -46,7 +43,7 @@ pub fn main() {
 
     let window = winit::window::WindowBuilder::new()
         .with_title("WGSL ShaderLab")
-        .with_inner_size(winit::dpi::PhysicalSize::new(1920, 1080))
+        .with_inner_size(winit::dpi::PhysicalSize::new(1920u32, 1080))
         .build(&event_loop)
         .unwrap();
 
@@ -121,13 +118,8 @@ pub fn main() {
     };
     let mut renderer = Renderer::new(Backend::new(&device, settings, format));
 
-    let mut state = program::State::new(
-        controls,
-        viewport.logical_size(),
-        conversion::cursor_position(cursor_position, viewport.scale_factor()),
-        &mut renderer,
-        &mut debug,
-    );
+    let mut state =
+        program::State::new(controls, viewport.logical_size(), &mut renderer, &mut debug);
 
     // Run event loop
     event_loop.run(move |event, _, control_flow| {
@@ -262,15 +254,17 @@ pub fn main() {
                 }
 
                 // And then iced on top
-                let mouse_interaction = renderer.backend_mut().draw(
-                    &device,
-                    &mut staging_belt,
-                    &mut encoder,
-                    &target,
-                    &viewport,
-                    state.primitive(),
-                    &debug.overlay(),
-                );
+                renderer.with_primitives(|backend, primitive| {
+                    backend.present(
+                        &device,
+                        &mut staging_belt,
+                        &mut encoder,
+                        &target,
+                        primitive,
+                        &viewport,
+                        &debug.overlay(),
+                    );
+                });
 
                 // Then we submit the work
                 staging_belt.finish();
@@ -278,8 +272,10 @@ pub fn main() {
                 frame.present();
 
                 // Update the mouse cursor
-                window
-                    .set_cursor_icon(iced_winit::conversion::mouse_interaction(mouse_interaction));
+
+                window.set_cursor_icon(iced_winit::conversion::mouse_interaction(
+                    state.mouse_interaction(),
+                ));
 
                 // And recall staging buffers
                 local_pool

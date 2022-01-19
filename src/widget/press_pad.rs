@@ -1,9 +1,9 @@
 use iced_native::{
     event::{self, Event},
-    layout, mouse, overlay, touch,
-    {Clipboard, Element, Hasher, Layout, Length, Point, Rectangle, Widget},
+    layout, mouse, overlay, renderer, touch,
+    {Clipboard, Element, Hasher, Layout, Length, Point, Rectangle, Shell, Widget},
 };
-use iced_wgpu::{Defaults, Primitive, Renderer};
+use iced_wgpu::Renderer;
 
 pub struct PressPad<'a, Message> {
     content: Element<'a, Message, Renderer>,
@@ -43,7 +43,7 @@ impl<'a, Message: Clone> Widget<Message, Renderer> for PressPad<'a, Message> {
         cursor_position: Point,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
-        messages: &mut Vec<Message>,
+        shell: &mut Shell<Message>,
     ) -> event::Status {
         if let event::Status::Captured = self.content.on_event(
             event.clone(),
@@ -51,7 +51,7 @@ impl<'a, Message: Clone> Widget<Message, Renderer> for PressPad<'a, Message> {
             cursor_position,
             renderer,
             clipboard,
-            messages,
+            shell,
         ) {
             return event::Status::Captured;
         }
@@ -60,7 +60,7 @@ impl<'a, Message: Clone> Widget<Message, Renderer> for PressPad<'a, Message> {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. }) => {
                 if layout.bounds().contains(cursor_position) {
-                    messages.push(self.message.clone());
+                    shell.publish(self.message.clone());
                 }
                 event::Status::Captured
             }
@@ -71,33 +71,45 @@ impl<'a, Message: Clone> Widget<Message, Renderer> for PressPad<'a, Message> {
     fn draw(
         &self,
         renderer: &mut Renderer,
-        defaults: &Defaults,
+        style: &renderer::Style,
         layout: Layout<'_>,
         cursor_position: Point,
         viewport: &Rectangle,
-    ) -> (Primitive, mouse::Interaction) {
+    ) {
+        self.content
+            .draw(renderer, style, layout, cursor_position, viewport);
+    }
+
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor_position: Point,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
         let bounds = layout.bounds();
 
-        let (content, _) = self
+        let _ = self
             .content
-            .draw(renderer, defaults, layout, cursor_position, viewport);
+            .mouse_interaction(layout, cursor_position, viewport, renderer);
 
-        (
-            content,
-            if bounds.contains(cursor_position) {
-                mouse::Interaction::Pointer
-            } else {
-                mouse::Interaction::default()
-            },
-        )
+        if bounds.contains(cursor_position) {
+            mouse::Interaction::Pointer
+        } else {
+            mouse::Interaction::default()
+        }
     }
 
     fn hash_layout(&self, state: &mut Hasher) {
         self.content.hash_layout(state);
     }
 
-    fn overlay(&mut self, layout: Layout<'_>) -> Option<overlay::Element<'_, Message, Renderer>> {
-        self.content.overlay(layout)
+    fn overlay(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+    ) -> Option<overlay::Element<'_, Message, Renderer>> {
+        self.content.overlay(layout, renderer)
     }
 }
 

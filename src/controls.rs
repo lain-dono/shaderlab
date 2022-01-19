@@ -1,14 +1,13 @@
-use iced_wgpu::Renderer;
-use iced_winit::{
-    alignment, button, scrollable, Alignment, Button, Column, Command, Container, Element, Length,
-    Point, Program, Rectangle, Row, Rule, Scrollable, Text,
+use self::workspace::Workspace;
+use crate::node::{Message as NodeMessage, Node, NodeId, NodeMap, Type};
+use iced_native::widget::{
+    button, scrollable, Button, Column, Container, Row, Rule, Scrollable, Text,
 };
+use iced_wgpu::Renderer;
+use iced_winit::{alignment, Alignment, Command, Element, Length, Point, Program, Rectangle};
 
 pub mod swizzle;
 pub mod workspace;
-
-use self::workspace::Workspace;
-use crate::node::{BoxedNode as _, Message as NodeMessage, Node, NodeId, NodeMap, NodeWidget};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -39,18 +38,14 @@ impl Controls {
     pub fn new() -> Self {
         Self {
             workspace: workspace::State::with_nodes({
-                let color_a = crate::node::input::Color::boxed();
-                let color_b = crate::node::input::Color::boxed();
-                let triangle = crate::node::input::Triangle::boxed();
-                let add = crate::node::math::Add::boxed();
-                let master = crate::node::master::Master::boxed();
-
+                use crate::node::{input, master, math};
                 let mut nodes = NodeMap::default();
-                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(50.0, 100.0), color_a));
-                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(50.0, 300.0), color_b));
-                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(300.0, 100.0), triangle));
-                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(300.0, 300.0), add));
-                nodes.insert_with_key(|id| NodeWidget::new(id, Point::new(500.0, 100.0), master));
+                nodes.add(Point::new(50.0, 100.0), input::Input::new(Type::Vector4));
+                nodes.add(Point::new(50.0, 300.0), input::Color::default());
+                nodes.add(Point::new(300.0, 100.0), input::Triangle::default());
+                nodes.add(Point::new(300.0, 200.0), input::Fullscreen::default());
+                nodes.add(Point::new(300.0, 300.0), math::Add::default());
+                nodes.add(Point::new(500.0, 100.0), master::Master::default());
                 nodes
             }),
             ..Default::default()
@@ -111,49 +106,49 @@ impl Program for Controls {
             Message::Fix(node) => self.workspace.fix_node_position(node),
 
             Message::AddNode(node) => self.workspace.add_node(node()),
-            Message::Workspace(message) => match message {
-                NodeMessage::Remove(node) => self.workspace.remove_node(node),
-                NodeMessage::Dynamic(node, message) => {
-                    self.workspace.update_node(node, message);
-                    if let Some(source) = self.workspace.try_traverse() {
-                        self.source = source;
+            Message::Workspace(message) => {
+                match message {
+                    NodeMessage::Remove(node) => self.workspace.remove_node(node),
+                    NodeMessage::Dynamic(node, message) => {
+                        self.workspace.update_node(node, message)
+                    }
+                    NodeMessage::SetDefault(node, port, value) => {
+                        self.workspace.set_port_default(node, port, value)
+                    }
+                    NodeMessage::DragStart(node) => {
+                        log::info!("start drag");
+                        self.workspace.drag = Some(node);
+                        self.workspace.fix_node_position(node);
+                    }
+                    NodeMessage::DragMove(position) => {
+                        let delta = position - self.workspace.drag_last;
+                        self.workspace.drag_last = position;
+                        if let Some(id) = self.workspace.drag {
+                            self.workspace.move_node(id, delta);
+                            return next_frame(Message::Fix(id));
+                        }
+                    }
+                    NodeMessage::DragEnd(node) => {
+                        log::info!("end drag");
+                        self.workspace.drag = None;
+                        self.workspace.fix_node_position(node);
+                        return next_frame(Message::Fix(node));
+                    }
+                    NodeMessage::StartEdge(from) => {
+                        self.workspace.start_edge(from);
+                    }
+                    NodeMessage::CancelEdge => {
+                        log::info!("cancel edge creation");
+                        self.workspace.end();
+                        self.workspace.request_redraw();
+                        self.workspace.drag = None;
                     }
                 }
-                NodeMessage::SetDefault(node, port, value) => {
-                    self.workspace.set_port_default(node, port, value)
+
+                if let Some(source) = self.workspace.try_traverse() {
+                    self.source = source;
                 }
-                NodeMessage::DragStart(node) => {
-                    log::info!("start drag");
-                    self.workspace.drag = Some(node);
-                    self.workspace.fix_node_position(node);
-                }
-                NodeMessage::DragMove(position) => {
-                    let delta = position - self.workspace.drag_last;
-                    self.workspace.drag_last = position;
-                    if let Some(id) = self.workspace.drag {
-                        self.workspace.move_node(id, delta);
-                        return next_frame(Message::Fix(id));
-                    }
-                }
-                NodeMessage::DragEnd(node) => {
-                    log::info!("end drag");
-                    self.workspace.drag = None;
-                    self.workspace.fix_node_position(node);
-                    return next_frame(Message::Fix(node));
-                }
-                NodeMessage::StartEdge(from) => {
-                    self.workspace.start_edge(from);
-                    if let Some(source) = self.workspace.try_traverse() {
-                        self.source = source;
-                    }
-                }
-                NodeMessage::CancelEdge => {
-                    log::info!("cancel edge creation");
-                    self.workspace.end();
-                    self.workspace.request_redraw();
-                    self.workspace.drag = None;
-                }
-            },
+            }
 
             Message::ScrollToTop => {
                 self.scrollable.snap_to(0.0);
@@ -291,6 +286,7 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
         }
     }
 
+    /*
     scrollable
         /*
         .header("Artistic")
@@ -332,7 +328,7 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
         .rowx(&[("fullscreen", crate::node::input::Fullscreen::boxed)])
         .rowx(&[("vec4", crate::node::input::Input::boxed)])
         .rowx(&[("color", crate::node::input::Color::boxed)])
-        .rowx(&[("position", crate::node::input::Position::boxed)])
+        //.rowx(&[("position", crate::node::input::Position::boxed)])
         //.item("Boolean")
         //.item("Color")
         //.item("Constant")
@@ -552,4 +548,7 @@ fn node_list(scrollable: Scrollable<Message, Renderer>) -> Scrollable<Message, R
     .item("Triplanar")
     .item("Twirl")
     */
+    */
+
+    scrollable
 }

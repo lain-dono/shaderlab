@@ -16,12 +16,12 @@ iced_graphics = { git = "https://github.com/hecrj/iced", features = ["canvas"] }
 env_logger = "0.9"
 slotmap = "1"
 log = "0.4"
-naga = { version = "0.7", features = ["wgsl-out"] }
+naga = { version = "0.8", features = ["wgsl-in", "wgsl-out"] }
 
 downcast-rs = "1.2"
-fnv = "1"
-native-dialog = "0.5.5"
+ahash = "0.7"
+native-dialog = "0.6.1"
 
-arrayvec = "0.7.1"
+arrayvec = "0.7.2"
 
 num-traits = "0.2.14"

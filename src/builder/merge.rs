@@ -78,12 +78,7 @@ fn merge_types(
                 size,
                 stride,
             },
-            TypeInner::Struct {
-                top_level,
-                ref members,
-                span,
-            } => TypeInner::Struct {
-                top_level,
+            TypeInner::Struct { ref members, span } => TypeInner::Struct {
                 span,
                 members: members
                     .iter()
@@ -277,6 +272,7 @@ fn clone_function(
                         offset,
                         level,
                         depth_ref,
+                        gather,
                     } => Expression::ImageSample {
                         image: expressions[image],
                         sampler: expressions[sampler],
@@ -285,6 +281,7 @@ fn clone_function(
                         offset: offset.map(|c| constants[&c]),
                         level: *level,
                         depth_ref: depth_ref.map(|expr| expressions[&expr]),
+                        gather: *gather,
                     },
                     Expression::ImageLoad {
                         image,
@@ -395,21 +392,16 @@ fn clone_block(block: &Block, expressions: &Expressions, functions: &Functions) 
             accept: clone_block(accept, expressions, functions),
             reject: clone_block(reject, expressions, functions),
         },
-        Statement::Switch {
-            selector,
-            cases,
-            default,
-        } => Statement::Switch {
+        Statement::Switch { selector, cases } => Statement::Switch {
             selector: expressions[selector],
             cases: cases
                 .iter()
                 .map(|sc| SwitchCase {
-                    value: sc.value,
+                    value: sc.value.clone(), // todo
                     body: clone_block(&sc.body, expressions, functions),
                     fall_through: sc.fall_through,
                 })
                 .collect(),
-            default: clone_block(default, expressions, functions),
         },
         Statement::Loop { body, continuing } => Statement::Loop {
             body: clone_block(body, expressions, functions),

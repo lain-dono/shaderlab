@@ -2,9 +2,9 @@ use iced_wgpu::wgpu;
 use iced_winit::Rectangle;
 
 fn hash_shader(x: &str) -> u64 {
-    use fnv::FnvBuildHasher;
-    use std::hash::{BuildHasher, Hash, Hasher};
-    let mut hasher = FnvBuildHasher::default().build_hasher();
+    use ahash::AHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = AHasher::default();
     x.hash(&mut hasher);
     hasher.finish()
 }
@@ -27,9 +27,7 @@ impl Scene {
                 view: target,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(crate::style::to_clear_color(
-                        crate::style::WORKSPACE_BG,
-                    )),
+                    load: crate::style::to_clear_color(crate::style::WORKSPACE_BG),
                     store: true,
                 },
             }],
@@ -115,6 +113,7 @@ fn build_pipeline(device: &wgpu::Device, shader: &str) -> Option<wgpu::RenderPip
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
+            multiview: None,
         }),
     )
 }

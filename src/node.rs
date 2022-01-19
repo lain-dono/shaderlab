@@ -1,11 +1,13 @@
-use crate::builder::NodeBuilder;
+use crate::builder::FunctionBuilder;
 use crate::style::{self, FONT_SIZE};
 use crate::widget::pad;
+use downcast_rs::Downcast;
+use iced_graphics::{Column, Container, Row, Rule, Space};
+use iced_native::widget::text::Text;
 use iced_wgpu::Renderer;
-use iced_winit::{
-    alignment, Alignment, Column, Container, Element, Length, Point, Row, Rule, Space, Text,
-};
-use naga::{valid::ShaderStages, ScalarKind, VectorSize};
+use iced_winit::{alignment, Alignment, Element, Length, Point, Vector};
+use naga::{Expression, Handle};
+use std::ops::{Deref, DerefMut, Index, IndexMut};
 
 pub mod default;
 pub mod input;
@@ -18,36 +20,26 @@ mod port;
 pub use self::edge::{Edge, Input, InputMarker, Output, OutputMarker, Pending, Slot};
 pub use self::port::PortId;
 
+pub type NodeElement<'a> = Element<'a, Message, Renderer>;
+
 slotmap::new_key_type! { pub struct NodeId; }
 
-struct SlotType {
-    stages: ShaderStages,
+impl ToString for NodeId {
+    fn to_string(&self) -> String {
+        let value = slotmap::Key::data(self).as_ffi();
+        let idx = (value & 0xffff_ffff) as u32;
+        let version = ((value >> 32) | 1) as u32; // Ensure version is odd.
+        format!("{}v{}", idx, version)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Type {
-    Scalar(ScalarKind),
-    Vector(ScalarKind, VectorSize),
-    Matrix(ScalarKind, VectorSize, VectorSize),
+    Vector1,
+    Vector2,
+    Vector3,
+    Vector4,
 }
-
-impl Type {
-    pub const V2F: Self = Self::Vector(ScalarKind::Float, VectorSize::Bi);
-    pub const V3F: Self = Self::Vector(ScalarKind::Float, VectorSize::Tri);
-    pub const V4F: Self = Self::Vector(ScalarKind::Float, VectorSize::Quad);
-}
-
-pub trait BoxedNode {
-    fn boxed() -> Box<dyn Node>;
-}
-
-impl<T: Node + Default> BoxedNode for T {
-    fn boxed() -> Box<dyn Node> {
-        Box::new(Self::default())
-    }
-}
-
-pub type NodeView<'a> = Element<'a, Box<dyn DynMessage>, Renderer>;
 
 pub trait DynMessage: downcast_rs::Downcast + std::fmt::Debug + Send + Sync {
     fn box_clone(&self) -> Box<dyn DynMessage>;
@@ -79,92 +71,73 @@ pub enum Event {
     Dynamic(Box<dyn DynMessage>),
     AttachInput(PortId, Option<Output>),
     AttachOutput(PortId, Option<Input>),
+    SetDefault(PortId, [f64; 4]),
 }
 
 #[derive(Debug)]
 pub struct GenError;
 
-pub struct NodeDescriptor<'a> {
-    label: &'a str,
-    width: u16,
-    inputs: &'a [(&'a str, Type)],
-    outputs: &'a [(&'a str, Type)],
-}
+pub trait Node: Downcast + 'static {
+    fn inputs(&self) -> &[port::State];
+    fn outputs(&self) -> &[port::State];
 
-pub trait Node: std::fmt::Debug + 'static + downcast_rs::Downcast + NodeBuilder {
-    fn desc(&self) -> NodeDescriptor<'_>;
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>>;
 
-    fn update(&mut self, event: Event) {
-        match event {
-            Event::Dynamic(_) => log::info!("node internal event"),
-            Event::AttachInput(port, remote) => {
-                log::info!("node input event: {:?} {:?}", port, remote)
-            }
-            Event::AttachOutput(port, remote) => {
-                log::info!("node output event: {:?} {:?}", port, remote)
-            }
-        }
-    }
-
-    fn view(&mut self, _node: NodeId) -> NodeView {
-        iced_native::Space::new(iced_native::Length::Shrink, iced_native::Length::Shrink).into()
-    }
+    fn update(&mut self, event: Event);
+    fn view(&mut self, _node: NodeId) -> Element<Message, Renderer>;
 }
 
 downcast_rs::impl_downcast!(Node);
 
 #[derive(Default)]
-pub struct NodeMap(slotmap::SlotMap<NodeId, NodeWidget>);
+pub struct NodeMap(slotmap::SlotMap<NodeId, (Point, Box<dyn Node>)>);
 
-impl std::ops::Deref for NodeMap {
-    type Target = slotmap::SlotMap<NodeId, NodeWidget>;
+impl NodeMap {
+    pub fn add(&mut self, position: Point, node: impl Node) {
+        self.0.insert((position, Box::new(node)));
+    }
+
+    pub fn append_position(&mut self, node: NodeId, diff: Vector) {
+        self.0[node].0 = self.0[node].0 + diff;
+    }
+}
+
+impl Deref for NodeMap {
+    type Target = slotmap::SlotMap<NodeId, (Point, Box<dyn Node>)>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl std::ops::DerefMut for NodeMap {
+impl DerefMut for NodeMap {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl std::ops::Index<NodeId> for NodeMap {
-    type Output = NodeWidget;
+impl Index<NodeId> for NodeMap {
+    type Output = dyn Node;
     fn index(&self, index: NodeId) -> &Self::Output {
-        &self.0[index]
+        self.0[index].1.as_ref()
     }
 }
 
-impl std::ops::IndexMut<NodeId> for NodeMap {
+impl IndexMut<NodeId> for NodeMap {
     fn index_mut(&mut self, index: NodeId) -> &mut Self::Output {
-        &mut self.0[index]
+        self.0[index].1.as_mut()
     }
 }
 
-impl std::ops::Index<Output> for NodeMap {
-    type Output = NodeWidget;
-    fn index(&self, index: Output) -> &Self::Output {
-        &self.0[index.node()]
+impl<T> Index<Slot<T>> for NodeMap {
+    type Output = dyn Node;
+    fn index(&self, index: Slot<T>) -> &Self::Output {
+        self.0[index.node].1.as_ref()
     }
 }
 
-impl std::ops::IndexMut<Output> for NodeMap {
-    fn index_mut(&mut self, index: Output) -> &mut Self::Output {
-        &mut self.0[index.node()]
-    }
-}
-
-impl std::ops::Index<Input> for NodeMap {
-    type Output = NodeWidget;
-    fn index(&self, index: Input) -> &Self::Output {
-        &self.0[index.node()]
-    }
-}
-
-impl std::ops::IndexMut<Input> for NodeMap {
-    fn index_mut(&mut self, index: Input) -> &mut Self::Output {
-        &mut self.0[index.node()]
+impl<T> IndexMut<Slot<T>> for NodeMap {
+    fn index_mut(&mut self, index: Slot<T>) -> &mut Self::Output {
+        self.0[index.node].1.as_mut()
     }
 }
 
@@ -174,16 +147,7 @@ impl crate::builder::NodeBuilder for NodeMap {
         function: &mut crate::builder::FunctionBuilder,
         output: Output,
     ) -> Option<naga::Handle<naga::Expression>> {
-        self.0[output.node()].node.expr(function, output)
-    }
-}
-
-impl ToString for NodeId {
-    fn to_string(&self) -> String {
-        let value = slotmap::Key::data(self).as_ffi();
-        let idx = (value & 0xffff_ffff) as u32;
-        let version = ((value >> 32) | 1) as u32; // Ensure version is odd.
-        format!("{}v{}", idx, version)
+        self.0[output.node].1.expr(function, output)
     }
 }
 
@@ -204,12 +168,9 @@ pub enum Message {
 }
 
 pub struct NodeWidget {
-    id: NodeId,
-    position: Point,
     title: Title,
     width: u16,
 
-    node: Box<dyn crate::node::Node>,
     ports: Ports,
     defaults: Vec<default::InputDefault>,
 
@@ -218,57 +179,35 @@ pub struct NodeWidget {
 }
 
 impl NodeWidget {
-    pub fn new(id: NodeId, position: Point, node: impl Into<Box<dyn crate::node::Node>>) -> Self {
-        let node = node.into();
-        let desc = node.desc();
-
-        let mut defaults = Vec::with_capacity(desc.inputs.len());
-        for _ in 0..desc.inputs.len() {
-            defaults.push(default::InputDefault::new([0.0; 4], 4));
+    pub fn new(label: &str, width: u16, inputs: &[(&str, Type)], outputs: &[(&str, Type)]) -> Self {
+        let mut defaults = Vec::with_capacity(inputs.len());
+        for (_, ty) in inputs {
+            let limit = match ty {
+                Type::Vector1 => 1,
+                Type::Vector2 => 2,
+                Type::Vector3 => 3,
+                Type::Vector4 => 4,
+            };
+            defaults.push(default::InputDefault::new([0.0; 4], limit));
         }
 
         Self {
-            id,
-            position,
-            width: desc.width,
-            title: Title::new(&desc.label),
-            inputs_remote: vec![None; desc.inputs.len()],
-            outputs_remote: vec![None; desc.outputs.len()],
+            width,
+            title: Title::new(label),
+            inputs_remote: vec![None; inputs.len()],
+            outputs_remote: vec![None; outputs.len()],
             ports: Ports {
-                inputs: desc
-                    .inputs
+                inputs: inputs
                     .iter()
-                    .map(|(name, _)| port::State::new(name))
+                    .map(|(name, ty)| port::State::new(name, *ty))
                     .collect(),
-                outputs: desc
-                    .outputs
+                outputs: outputs
                     .iter()
-                    .map(|(name, _)| port::State::new(name))
+                    .map(|(name, ty)| port::State::new(name, *ty))
                     .collect(),
             },
             defaults,
-            node,
         }
-    }
-
-    pub fn downcast_ref<T: Node>(&self) -> Option<&T> {
-        self.node.downcast_ref::<T>()
-    }
-
-    pub fn id(&self) -> NodeId {
-        self.id
-    }
-
-    pub fn position(&self) -> Point {
-        self.position
-    }
-
-    pub fn set_position(&mut self, position: Point) {
-        self.position = position;
-    }
-
-    pub fn set_port_default(&mut self, port: PortId, value: [f64; 4]) {
-        self.defaults[port.0].value = value;
     }
 
     pub fn inputs(&self) -> impl Iterator<Item = (PortId, &port::State)> + '_ {
@@ -287,31 +226,38 @@ impl NodeWidget {
             .map(|(i, port)| (PortId(i), port))
     }
 
-    pub fn event(&mut self, event: Event) {
+    pub fn update(&mut self, event: Event) {
         match event {
             Event::AttachInput(port, remote) => self.inputs_remote[port.0] = remote,
             Event::AttachOutput(port, remote) => self.outputs_remote[port.0] = remote,
+            Event::SetDefault(port, value) => self.defaults[port.0].value = value,
             _ => (),
         }
-        self.node.update(event)
     }
 
-    pub fn widget(&mut self) -> Element<Message, Renderer> {
-        let title = self.title.view(self.id);
+    pub fn view<'a>(
+        &'a mut self,
+        node: NodeId,
+        controls: impl Into<Option<Element<'a, Box<dyn DynMessage>, Renderer>>>,
+    ) -> Element<'a, Message, Renderer> {
+        let title = self.title.view(node);
 
         let title = Container::new(title).style(style::Node);
         let rule = Rule::horizontal(1).style(style::Transparent);
 
         let defaults =
-            create_defaults_view(self.id, self.width, &mut self.defaults, &self.inputs_remote);
+            create_defaults_view(node, self.width, &mut self.defaults, &self.inputs_remote);
 
         let body = {
-            let inputs = self.ports.input_view(self.id, &self.inputs_remote);
-            let outputs = self.ports.output_view(self.id, &self.outputs_remote);
+            let inputs = self.ports.input_view(node, &self.inputs_remote);
+            let outputs = self.ports.output_view(node, &self.outputs_remote);
 
             let io = Row::new().push(inputs).push(outputs);
-            let node = self.id;
-            let controls = self.node.view(node).map(move |m| Message::Dynamic(node, m));
+
+            let controls = match controls.into() {
+                Some(controls) => controls.map(move |m| Message::Dynamic(node, m)),
+                None => Space::new(Length::Shrink, Length::Shrink).into(),
+            };
 
             Container::new(Column::new().push(io).push(controls)).style(style::Node)
         };
@@ -377,8 +323,8 @@ fn grap_pad<'a>(
 }
 
 struct Ports {
-    inputs: Vec<port::State>,
-    outputs: Vec<port::State>,
+    pub inputs: Vec<port::State>,
+    pub outputs: Vec<port::State>,
 }
 
 impl Ports {

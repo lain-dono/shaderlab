@@ -1,4 +1,4 @@
-use crate::node::{NodeId, Output, PortId};
+use crate::node::{NodeId, Output};
 use naga::{
     front::Typifier, proc::ResolveError, Binding, Constant, EntryPoint, Expression, Function,
     FunctionArgument, FunctionResult, GlobalVariable, Handle, LocalVariable, Module, Span,
@@ -10,7 +10,9 @@ pub mod merge;
 pub mod types;
 
 pub trait NodeBuilder {
-    fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>>;
+    fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>> {
+        None
+    }
 }
 
 pub trait AnyNode: downcast_rs::Downcast + NodeBuilder {}
@@ -22,7 +24,7 @@ pub type Node = Box<dyn AnyNode>;
 
 impl NodeBuilder for slotmap::SlotMap<NodeId, Node> {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        self[output.node()].expr(function, output)
+        self[output.node].expr(function, output)
     }
 }
 
@@ -59,7 +61,8 @@ impl<'nodes> ModuleBuilder<'nodes> {
         use naga::valid::{Capabilities, Validator};
         let mut validator = Validator::new(Default::default(), Capabilities::PRIMITIVE_INDEX);
         let info = validator.validate(&self.module).unwrap();
-        naga::back::wgsl::write_string(&self.module, &info).unwrap()
+        let flags = naga::back::wgsl::WriterFlags::empty();
+        naga::back::wgsl::write_string(&self.module, &info, flags).unwrap()
     }
 
     pub fn insert_type(&mut self, ty: Type) -> Handle<Type> {
@@ -172,41 +175,5 @@ impl<'a, 'nodes> FunctionBuilder<'a, 'nodes> {
         let end = Statement::Emit(self.function.expressions.range_from(old_len));
         self.function.body.push(end, Span::default());
         expr
-    }
-}
-
-pub fn example_naga() {
-    let mut nodes: slotmap::SlotMap<crate::node::NodeId, Node> = slotmap::SlotMap::default();
-
-    let triangle = nodes.insert(Box::new(crate::node::input::Triangle));
-    let color = nodes.insert(Box::new([0.1f64, 0.2, 0.3, 0.4]));
-
-    let _master = nodes.insert(Box::new(crate::node::master::Master {
-        position: Some(Output::new(triangle, PortId(0))),
-        color: Some(Output::new(color, PortId(0))),
-    }));
-
-    for (_, node) in nodes.iter() {
-        let master: Option<&crate::node::master::Master> = node.downcast_ref();
-        if let Some(master) = master {
-            if let Some(builder) = master.entry(&nodes) {
-                println!("{:#?}", builder.module);
-                println!("{}", builder.build());
-            }
-        }
-    }
-
-    if true {
-        println!("\n-------------------\n");
-        let source = r#"
-fn lol() {
-    let a = vec2<f32>(1.0, 2.0);
-    let x = vec4<f32>(a, 0.0, 0.0);
-    let y = vec2<f32>(x);
-}
-        "#;
-        let module = ModuleBuilder::from_wgsl(&nodes, source).unwrap();
-        println!("{:#?}", module.module);
-        println!("{}", module.build());
     }
 }

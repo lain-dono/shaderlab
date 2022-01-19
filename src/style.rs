@@ -12,7 +12,7 @@ const fn rgba(value: u32, a: f32) -> Color {
     Color { r, g, b, a }
 }
 
-pub fn to_clear_color(color: Color) -> iced_wgpu::wgpu::Color {
+pub fn to_clear_color(color: impl Into<Option<Color>>) -> wgpu::LoadOp<wgpu::Color> {
     // As described in: https://en.wikipedia.org/wiki/SRGB#The_reverse_transformation
     fn linear_component(u: f64) -> f64 {
         if u < 0.04045 {
@@ -22,12 +22,16 @@ pub fn to_clear_color(color: Color) -> iced_wgpu::wgpu::Color {
         }
     }
 
-    let Color { r, g, b, a } = color;
-    wgpu::Color {
-        r: linear_component(r as f64),
-        g: linear_component(g as f64),
-        b: linear_component(b as f64),
-        a: a as f64,
+    if let Some(color) = color.into() {
+        let Color { r, g, b, a } = color;
+        wgpu::LoadOp::Clear(wgpu::Color {
+            r: linear_component(r as f64),
+            g: linear_component(g as f64),
+            b: linear_component(b as f64),
+            a: a as f64,
+        })
+    } else {
+        wgpu::LoadOp::Load
     }
 }
 

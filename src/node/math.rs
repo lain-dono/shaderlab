@@ -1,5 +1,5 @@
 use crate::builder::{FunctionBuilder, NodeBuilder};
-use crate::node::{Event, Node, NodeDescriptor, Output, PortId};
+use crate::node::{port, Event, Node, NodeElement, NodeId, NodeWidget, Output, PortId};
 use arrayvec::ArrayVec;
 use naga::{
     BinaryOperator, Expression, Handle, MathFunction, SwizzleComponent, UnaryOperator, VectorSize,
@@ -26,7 +26,7 @@ impl Math {
 
 impl NodeBuilder for Math {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        if output.port() != PortId(0) {
+        if output.port != PortId(0) {
             return None;
         }
 
@@ -63,36 +63,36 @@ impl NodeBuilder for Math {
 macro_rules! emit_binary {
     ($name:ident :: $fn:ident => $op:ident) => { emit_binary!($name::$fn => $op:V4F); };
     ($name:ident :: $fn:ident => $op:ident : $ty:ident) => {
-        #[derive(Default, Debug)]
-        pub struct $name([Option<Output>; 2]);
+        pub struct $name(NodeWidget);
 
-        impl Node for $name {
-            fn desc(&self) -> NodeDescriptor<'_> {
-                NodeDescriptor {
-                    label: stringify!($fn),
-                    width: 75,
-                    inputs: &[("a", super::Type::V4F), ("b", super::Type::V4F)],
-                    outputs: &[("out", super::Type::V4F)],
-                }
-            }
-
-            fn update(&mut self, event: Event) {
-                match event {
-                    Event::AttachInput(PortId(port), remote) => self.0[port] = remote,
-                    _ => (),
-                }
+        impl Default for $name {
+            fn default() -> Self {
+                Self(NodeWidget::new(
+                    stringify!($fn),75,
+                    &[("a", super::Type::Vector4), ("b", super::Type::Vector4)],
+                    &[("out", super::Type::Vector4)],
+                ))
             }
         }
 
-        impl NodeBuilder for $name {
+        impl Node for $name {
+            fn inputs(&self) -> &[port::State] { &self.0.ports.inputs }
+            fn outputs(&self) -> &[port::State] { &self.0.ports.outputs }
+            fn update(&mut self, event: Event) {
+                self.0.update(event)
+            }
+            fn view(&mut self, node: NodeId) -> NodeElement {
+                self.0.view(node, None)
+            }
+
             fn expr(
                 &self,
                 function: &mut FunctionBuilder,
                 output: Output,
             ) -> Option<Handle<Expression>> {
-                if output.port() == PortId(0) {
-                    let left = function.node(self.0[0]?)?;
-                    let right = function.node(self.0[1]?)?;
+                if output.port == PortId(0) {
+                    let left = function.node(self.0.inputs_remote[0]?)?;
+                    let right = function.node(self.0.inputs_remote[1]?)?;
                     let op = BinaryOperator::$op;
                     Some(function.emit(Expression::Binary { op, left, right }))
                 } else {
@@ -112,35 +112,35 @@ emit_binary!(Rem::rem => Modulo);
 macro_rules! emit_unary {
     ($name:ident :: $fn:ident => $op:ident) => { emit_unary!($name::$fn => $op:V4F); };
     ($name:ident :: $fn:ident => $op:ident : $ty:ident) => {
-        #[derive(Default, Debug)]
-        pub struct $name(Option<Output>);
+        pub struct $name(NodeWidget);
 
-        impl Node for $name {
-            fn desc(&self) -> NodeDescriptor<'_> {
-                NodeDescriptor {
-                    label: stringify!($fn),
-                    width: 75,
-                    inputs: &[("x", super::Type::V4F)],
-                    outputs: &[("out", super::Type::V4F)],
-                }
-            }
-
-            fn update(&mut self, event: Event) {
-                match event {
-                    Event::AttachInput(PortId(0), remote) => self.0 = remote,
-                    _ => (),
-                }
+        impl Default for $name {
+            fn default() -> Self {
+                Self(NodeWidget::new(
+                    stringify!($fn),75,
+                    &[("x", super::Type::Vector4)],
+                    &[("out", super::Type::Vector4)],
+                ))
             }
         }
 
-        impl NodeBuilder for $name {
+        impl Node for $name {
+            fn inputs(&self) -> &[port::State] { &self.0.ports.inputs }
+            fn outputs(&self) -> &[port::State] { &self.0.ports.outputs }
+            fn update(&mut self, event: Event) {
+                self.0.update(event)
+            }
+            fn view(&mut self, node: NodeId) -> NodeElement {
+                self.0.view(node, None)
+            }
+
             fn expr(
                 &self,
                 function: &mut FunctionBuilder,
                 output: Output,
             ) -> Option<Handle<Expression>> {
-                assert_eq!(output.port(), PortId(0));
-                let expr = function.node(self.0?)?;
+                assert_eq!(output.port, PortId(0));
+                let expr = function.node(self.0.inputs_remote[0]?)?;
                 let op = UnaryOperator::$op;
                 Some(function.emit(Expression::Unary { op, expr }))
             }
@@ -158,7 +158,7 @@ pub struct Unary {
 
 impl NodeBuilder for Unary {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        if output.port() == PortId(0) {
+        if output.port == PortId(0) {
             let expr = function.node(self.expr?)?;
             let op = self.op;
             Some(function.emit(Expression::Unary { op, expr }))
@@ -176,7 +176,7 @@ pub struct Swizzle {
 
 impl NodeBuilder for Swizzle {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        if output.port() == PortId(0) {
+        if output.port == PortId(0) {
             let vector = function.node(self.vector?)?;
             Some(function.emit(Expression::Swizzle {
                 size: self.size,
@@ -189,6 +189,7 @@ impl NodeBuilder for Swizzle {
     }
 }
 
+/*
 macro_rules! custom {
     ($name:ident :: $fn:ident ($($arg:ident),+) -> $ret:ident ($format:literal, $($arg_expr:expr),+)) => {
         #[derive(Clone, Debug, Default)]
@@ -266,3 +267,4 @@ math_fn!(Step::step(x, y));
 math_fn!(DpDx::dpdx(e));
 math_fn!(DpDy::dpdy(e));
 //math_fn!(DPDXY::dpdxy(e));
+*/

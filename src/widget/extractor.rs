@@ -1,5 +1,5 @@
-use iced_native::{Clipboard, Hasher};
-use iced_wgpu::{Defaults, Primitive, Renderer};
+use iced_native::{renderer, Clipboard, Hasher, Shell};
+use iced_wgpu::Renderer;
 use iced_winit::{
     event, layout, mouse, overlay, Element, Event, Layout, Length, Point, Rectangle, Widget,
 };
@@ -40,37 +40,47 @@ impl<'a, Message> Widget<Message, Renderer> for Extractor<'a, Message> {
         cursor_position: Point,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
-        messages: &mut Vec<Message>,
+        shell: &mut Shell<Message>,
     ) -> event::Status {
-        self.inner.on_event(
-            event,
-            layout,
-            cursor_position,
-            renderer,
-            clipboard,
-            messages,
-        )
+        self.inner
+            .on_event(event, layout, cursor_position, renderer, clipboard, shell)
     }
 
     fn draw(
         &self,
         renderer: &mut Renderer,
-        defaults: &Defaults,
+        style: &renderer::Style,
         layout: Layout<'_>,
         cursor_position: Point,
         viewport: &Rectangle,
-    ) -> (Primitive, mouse::Interaction) {
+    ) {
         self.bounds.set(layout.bounds());
         self.inner
-            .draw(renderer, defaults, layout, cursor_position, viewport)
+            .draw(renderer, style, layout, cursor_position, viewport);
+    }
+
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor_position: Point,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        self.bounds.set(layout.bounds());
+        self.inner
+            .mouse_interaction(layout, cursor_position, viewport, renderer)
     }
 
     fn hash_layout(&self, state: &mut Hasher) {
         self.inner.hash_layout(state);
     }
 
-    fn overlay(&mut self, layout: Layout<'_>) -> Option<overlay::Element<'_, Message, Renderer>> {
-        self.inner.overlay(layout)
+    fn overlay(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+    ) -> Option<overlay::Element<'_, Message, Renderer>> {
+        self.inner.overlay(layout, renderer)
     }
 }
 

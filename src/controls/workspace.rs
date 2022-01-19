@@ -1,11 +1,9 @@
-use crate::node::{
-    self, Edge, Input, Message, Node, NodeId, NodeMap, NodeWidget, Output, Pending, PortId,
-};
+use crate::node::{self, Edge, Input, Message, Node, NodeId, NodeMap, Output, Pending, PortId};
 use iced_graphics::canvas::{self, Canvas, Cursor, Frame, Geometry};
-use iced_graphics::{Defaults, Primitive};
+use iced_native::Renderer as _;
 use iced_native::{
-    event, layout, mouse, overlay, Clipboard, Element, Event, Hasher, Layout, Length, Point,
-    Rectangle, Size, Vector, Widget,
+    event, layout, mouse, overlay, renderer, Clipboard, Element, Event, Hasher, Layout, Length,
+    Point, Rectangle, Shell, Size, Vector, Widget,
 };
 use iced_wgpu::Renderer;
 use std::cell::Cell;
@@ -40,28 +38,25 @@ impl State {
     }
 
     pub fn update_node(&mut self, node: NodeId, message: Box<dyn crate::node::DynMessage>) {
-        self.nodes[node].event(node::Event::Dynamic(message));
+        self.nodes[node].update(node::Event::Dynamic(message));
     }
 
     pub fn set_port_default(&mut self, node: NodeId, port: PortId, value: [f64; 4]) {
-        self.nodes[node].set_port_default(port, value)
+        self.nodes[node].update(node::Event::SetDefault(port, value))
     }
 
     pub fn add_node(&mut self, node: Box<dyn Node>) {
-        log::info!("add node {:?}", node);
         let bounds = self.bounds();
         let position = Point::ORIGIN + (bounds.center() - bounds.position());
-
-        self.nodes
-            .insert_with_key(|id| NodeWidget::new(id, position, node));
+        self.nodes.insert((position, node));
     }
 
     pub fn remove_node(&mut self, node: NodeId) {
         let removed = self.edges.iter().filter(|edge| edge.has_node(node));
 
         for &edge in removed {
-            self.nodes[edge.input()].event(node::Event::AttachInput(edge.input().port(), None));
-            self.nodes[edge.output()].event(node::Event::AttachOutput(edge.output().port(), None));
+            self.nodes[edge.input].update(node::Event::AttachInput(edge.input.port, None));
+            self.nodes[edge.output].update(node::Event::AttachOutput(edge.output.port, None));
         }
 
         self.edges.retain(|edge| !edge.has_node(node));
@@ -79,24 +74,20 @@ impl State {
                 if let Some(index) = self.edges.iter().position(|e| e.eq_node_port(&edge)) {
                     log::info!("remove {}", edge);
                     self.edges.remove(index);
-                    self.nodes[edge.input()]
-                        .event(node::Event::AttachInput(edge.input().port(), None));
-                    self.nodes[edge.output()]
-                        .event(node::Event::AttachOutput(edge.output().port(), None));
+                    self.nodes[edge.input].update(node::Event::AttachInput(edge.input.port, None));
+                    self.nodes[edge.output]
+                        .update(node::Event::AttachOutput(edge.output.port, None));
                 // only one edge for input port and not cycle
-                } else if self.edges.iter().all(|e| e.input() != edge.input())
-                    && self.find_cycle(edge)
+                } else if self.edges.iter().all(|e| e.input != edge.input) && self.find_cycle(edge)
                 {
                     log::info!("create {}", edge);
                     self.edges.push(edge);
 
-                    self.nodes[edge.input()].event(node::Event::AttachInput(
-                        edge.input().port(),
-                        Some(edge.output()),
-                    ));
-                    self.nodes[edge.output()].event(node::Event::AttachOutput(
-                        edge.output().port(),
-                        Some(edge.input()),
+                    self.nodes[edge.input]
+                        .update(node::Event::AttachInput(edge.input.port, Some(edge.output)));
+                    self.nodes[edge.output].update(node::Event::AttachOutput(
+                        edge.output.port,
+                        Some(edge.input),
                     ));
                 }
             }
@@ -110,44 +101,43 @@ impl State {
     }
 
     pub fn move_node(&mut self, id: NodeId, delta: Vector) {
-        let node = &mut self.nodes[id];
-        node.set_position(node.position() + delta);
+        self.nodes.append_position(id, delta);
         self.fix_node_position(id);
     }
 
     fn find_cycle(&self, edge: Edge) -> bool {
         let mut graph = crate::graph::Graph::default();
         for edge in &self.edges {
-            graph.add_edge(edge.output().node(), edge.input().node());
+            graph.add_edge(edge.output.node, edge.input.node);
         }
-        graph.add_edge(edge.output().node(), edge.input().node());
-        !graph.is_reachable(edge.input().node(), edge.output().node())
+        graph.add_edge(edge.output.node, edge.input.node);
+        !graph.is_reachable(edge.input.node, edge.output.node)
     }
 
-    pub fn fix_node_position(&mut self, node: NodeId) {
+    pub fn fix_node_position(&mut self, id: NodeId) {
         let base_offset = Point::ORIGIN - self.bounds().position();
 
-        let node = if let Some(node) = self.nodes.get(node) {
+        let node = if let Some(node) = self.nodes.get(id) {
             node
         } else {
-            log::warn!("can't find node: {:?}", node);
+            log::warn!("can't find node: {:?}", id);
             return;
         };
 
-        for (port, input) in node.inputs() {
+        for (port, input) in node.1.inputs().iter().enumerate() {
             let position = input.slot();
             for edge in &mut self.edges {
-                if edge.input() == Input::new(node.id(), port) {
-                    edge.set_input_position(position + base_offset);
+                if edge.input == Input::new(id, PortId(port)) {
+                    edge.input.position = position + base_offset;
                 }
             }
         }
 
-        for (port, output) in node.outputs() {
+        for (port, output) in node.1.outputs().iter().enumerate() {
             let position = output.slot();
             for edge in &mut self.edges {
-                if edge.output() == Output::new(node.id(), port) {
-                    edge.set_output_position(position + base_offset);
+                if edge.output == Output::new(id, PortId(port)) {
+                    edge.output.position = position + base_offset;
                 }
             }
         }
@@ -159,7 +149,7 @@ impl State {
         let module = self
             .nodes
             .values()
-            .find_map(|node| node.downcast_ref::<crate::node::master::Master>())
+            .find_map(|(_, node)| node.downcast_ref::<crate::node::master::Master>())
             .and_then(|master| master.entry(&self.nodes));
 
         if let Some(module) = module {
@@ -214,10 +204,10 @@ impl<'a> Workspace<'a> {
 
         let children = state
             .nodes
-            .values_mut()
-            .map(|node| Item {
-                position: node.position(),
-                widget: node.widget(),
+            .iter_mut()
+            .map(|(id, (position, node))| Item {
+                position: *position,
+                widget: node.view(id),
             })
             .collect();
 
@@ -283,13 +273,13 @@ impl<'a> Widget<Message, Renderer> for Workspace<'a> {
         cursor_position: Point,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
-        messages: &mut Vec<Message>,
+        shell: &mut Shell<Message>,
     ) -> event::Status {
         let mut children = layout.children();
         let canvas_layout = children.next();
 
         if let Event::Mouse(mouse::Event::CursorMoved { position }) = event {
-            messages.push(Message::DragMove(position))
+            shell.publish(Message::DragMove(position))
         }
 
         let mut status = event::Status::Ignored;
@@ -301,7 +291,7 @@ impl<'a> Widget<Message, Renderer> for Workspace<'a> {
                 cursor_position,
                 renderer,
                 clipboard,
-                messages,
+                shell,
             ));
             if matches!(status, event::Status::Captured) {
                 return status;
@@ -315,7 +305,7 @@ impl<'a> Widget<Message, Renderer> for Workspace<'a> {
                 cursor_position,
                 renderer,
                 clipboard,
-                messages,
+                shell,
             ))
         })
     }
@@ -323,70 +313,78 @@ impl<'a> Widget<Message, Renderer> for Workspace<'a> {
     fn draw(
         &self,
         renderer: &mut Renderer,
-        defaults: &Defaults,
+        style: &renderer::Style,
         layout: Layout<'_>,
         cursor_position: Point,
-        viewport: &Rectangle,
-    ) -> (Primitive, mouse::Interaction) {
+        _viewport: &Rectangle,
+    ) {
         let bounds = layout.bounds();
         self.bounds.set(bounds);
 
-        let mut mouse_interaction = mouse::Interaction::default();
+        let mut children = layout.children();
+
+        renderer.with_layer(bounds, |renderer| {
+            if let Some(layout) = children.next() {
+                self.canvas
+                    .draw(renderer, style, layout, cursor_position, &bounds);
+            }
+
+            let iter = self.children.iter().zip(children);
+
+            for (child, layout) in iter {
+                child
+                    .widget
+                    .draw(renderer, style, layout, cursor_position, &bounds);
+            }
+        });
+    }
+
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor_position: Point,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        let bounds = layout.bounds();
+        self.bounds.set(bounds);
+
+        let mut interaction = mouse::Interaction::default();
 
         let mut children = layout.children();
 
-        let canvas = children.next().map(|layout| {
-            let (primitive, _new_mouse_interaction) =
-                self.canvas
-                    .draw(renderer, defaults, layout, cursor_position, viewport);
+        let canvas_layout = children.next().unwrap();
+        self.canvas
+            .mouse_interaction(canvas_layout, cursor_position, &bounds, renderer);
 
-            //mouse_interaction = mouse_interaction.max(new_mouse_interaction);
+        let iter = self.children.iter().zip(children);
 
-            primitive
-        });
-
-        let primitives: Vec<_> = canvas
-            .into_iter()
-            .chain(self.children.iter().zip(children).map(|(child, layout)| {
-                let (primitive, new_mouse_interaction) =
-                    child
-                        .widget
-                        .draw(renderer, defaults, layout, cursor_position, viewport);
-
-                mouse_interaction = mouse_interaction.max(new_mouse_interaction);
-
-                let primitives = vec![primitive];
-
-                Primitive::Clip {
-                    bounds,
-                    offset: Default::default(),
-                    content: Box::new(Primitive::Group { primitives }),
-                }
-            }))
-            .collect();
-
-        let primitive = Primitive::Clip {
-            bounds,
-            offset: Default::default(),
-            content: Box::new(Primitive::Group { primitives }),
-        };
-
-        (primitive, mouse_interaction)
+        for (child, layout) in iter {
+            interaction = child
+                .widget
+                .mouse_interaction(layout, cursor_position, viewport, renderer)
+                .max(interaction);
+        }
+        interaction
     }
 
-    fn overlay(&mut self, layout: Layout<'_>) -> Option<overlay::Element<'_, Message, Renderer>> {
+    fn overlay(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+    ) -> Option<overlay::Element<'_, Message, Renderer>> {
         let mut children = layout.children();
 
         let layout = children.next();
         let canvas = &mut self.canvas;
-        if let Some(el) = layout.and_then(move |layout| canvas.overlay(layout)) {
+        if let Some(el) = layout.and_then(move |layout| canvas.overlay(layout, renderer)) {
             return Some(el);
         }
 
         self.children
             .iter_mut()
             .zip(children)
-            .find_map(|(child, layout)| child.widget.overlay(layout))
+            .find_map(|(child, layout)| child.widget.overlay(layout, renderer))
     }
 }
 

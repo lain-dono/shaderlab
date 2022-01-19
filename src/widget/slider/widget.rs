@@ -4,6 +4,7 @@
 use iced_native::event::{self, Event};
 use iced_native::layout;
 use iced_native::mouse;
+use iced_native::renderer;
 use iced_native::touch;
 use iced_native::{Clipboard, Element, Hasher, Layout, Length, Point, Rectangle, Size, Widget};
 
@@ -232,11 +233,11 @@ where
     fn draw(
         &self,
         renderer: &mut Renderer,
-        _defaults: &Renderer::Defaults,
+        style: &renderer::Style,
         layout: Layout<'_>,
         cursor_position: Point,
         _viewport: &Rectangle,
-    ) -> Renderer::Output {
+    ) {
         let start = *self.range.start();
         let end = *self.range.end();
 
@@ -248,6 +249,24 @@ where
             self.state.is_dragging,
             &self.style,
         )
+    }
+
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor_position: Point,
+        _viewport: &Rectangle,
+    ) -> mouse::Interaction {
+        let bounds = layout.bounds();
+        let is_mouse_over = bounds.contains(cursor_position);
+
+        if self.state.is_dragging {
+            mouse::Interaction::Grabbing
+        } else if is_mouse_over {
+            mouse::Interaction::Grab
+        } else {
+            mouse::Interaction::default()
+        }
     }
 
     fn hash_layout(&self, state: &mut Hasher) {

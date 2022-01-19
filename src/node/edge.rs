@@ -5,9 +5,9 @@ use std::{fmt, marker::PhantomData};
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Slot<T> {
-    node: NodeId,
-    port: PortId,
-    position: Point,
+    pub node: NodeId,
+    pub port: PortId,
+    pub position: Point,
     marker: PhantomData<T>,
 }
 
@@ -36,16 +36,6 @@ impl<T> Slot<T> {
             position,
             marker: PhantomData,
         }
-    }
-
-    #[inline]
-    pub const fn node(&self) -> NodeId {
-        self.node
-    }
-
-    #[inline]
-    pub const fn port(&self) -> PortId {
-        self.port
     }
 }
 
@@ -88,8 +78,8 @@ pub type Output = Slot<OutputMarker>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Edge {
-    output: Output,
-    input: Input,
+    pub output: Output,
+    pub input: Input,
 }
 
 impl fmt::Display for Edge {
@@ -105,22 +95,6 @@ impl Edge {
             (Pending::Output(output), Pending::Input(input)) => Some(Self { output, input }),
             _ => None,
         }
-    }
-
-    pub fn input(&self) -> Input {
-        self.input
-    }
-
-    pub fn output(&self) -> Output {
-        self.output
-    }
-
-    pub fn set_input_position(&mut self, position: Point) {
-        self.input.position = position;
-    }
-
-    pub fn set_output_position(&mut self, position: Point) {
-        self.output.position = position;
     }
 
     pub fn not_same_node(&self) -> bool {

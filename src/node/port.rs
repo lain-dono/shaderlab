@@ -1,12 +1,13 @@
-use crate::node::{Message, Pending};
+use crate::node::{Message, Pending, Type};
 use crate::style;
 use iced_graphics::backend::Text as _;
 use iced_native::{
     alignment,
     event::{self, Event},
-    layout, mouse, touch, {Clipboard, Element, Hasher, Layout, Length, Point, Rectangle, Size},
+    layout, mouse, renderer, touch,
+    {Clipboard, Element, Hasher, Layout, Length, Point, Rectangle, Size},
 };
-use iced_wgpu::{Defaults, Primitive, Renderer};
+use iced_wgpu::{Primitive, Renderer};
 use std::{cell::Cell, hash::Hash};
 
 #[derive(Copy, Clone, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
@@ -19,6 +20,7 @@ impl ToString for PortId {
 }
 
 pub struct State {
+    pub ty: Type,
     pub label: String,
     pub is_pressed: Cell<bool>,
     pub slot: Cell<Point>,
@@ -29,10 +31,11 @@ impl State {
         self.slot.get()
     }
 
-    pub fn new(label: impl ToString) -> Self {
+    pub fn new(label: impl ToString, ty: Type) -> Self {
         Self {
             label: label.to_string(),
             is_pressed: Default::default(),
+            ty,
             slot: Default::default(),
         }
     }
@@ -90,7 +93,7 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
         cursor_position: Point,
         _renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
-        messages: &mut Vec<Message>,
+        messages: &mut iced_native::Shell<Message>,
     ) -> event::Status {
         let bounds = layout.bounds();
         let center = Point::new(
@@ -117,7 +120,7 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
                     self.state.is_pressed.set(false);
 
                     if bounds.contains(cursor_position) {
-                        messages.push(self.on_press.clone());
+                        messages.publish(self.on_press.clone());
                     }
 
                     return event::Status::Captured;
@@ -132,21 +135,13 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
 
     fn draw(
         &self,
-        _renderer: &mut Renderer,
-        defaults: &Defaults,
+        renderer: &mut Renderer,
+        style: &renderer::Style,
         layout: Layout<'_>,
-        cursor_position: Point,
+        _cursor_position: Point,
         _viewport: &Rectangle,
-    ) -> (Primitive, mouse::Interaction) {
+    ) {
         let bounds = layout.bounds();
-
-        let is_hover = bounds.contains(cursor_position);
-
-        let mouse_interaction = if is_hover {
-            mouse::Interaction::Crosshair
-        } else {
-            mouse::Interaction::default()
-        };
 
         let center = Point::new(
             if self.is_input {
@@ -160,11 +155,18 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
 
         let pad = 3.5;
         let pad_set = 1.5;
-        let (fg, bg) = (style::PORT_COLOR, style::PORT_BACKGROUND);
+        let bg = style::PORT_BACKGROUND;
+        let fg = match self.state.ty {
+            Type::Vector1 => style::PORT_VECTOR_1,
+            Type::Vector2 => style::PORT_VECTOR_2,
+            Type::Vector3 => style::PORT_VECTOR_3,
+            Type::Vector4 => style::PORT_VECTOR_4,
+        };
+        //let (fg, bg) = (style::PORT_COLOR, );
         //let (border_color, background) = if self.is_input { (fg, bg) } else { (bg, fg) };
         let (border_color, background) = (fg, bg);
 
-        let slot = Primitive::Quad {
+        renderer.draw_primitive(Primitive::Quad {
             bounds: Rectangle {
                 x: center.x - pad,
                 y: center.y - pad,
@@ -175,9 +177,9 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
             border_radius: 100.0,
             border_width: 1.0,
             border_color,
-        };
+        });
 
-        let slot_set = Primitive::Quad {
+        renderer.draw_primitive(Primitive::Quad {
             bounds: Rectangle {
                 x: center.x - pad_set,
                 y: center.y - pad_set,
@@ -192,9 +194,9 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
             border_radius: 100.0,
             border_width: 0.0,
             border_color,
-        };
+        });
 
-        let label = Primitive::Text {
+        renderer.draw_primitive(Primitive::Text {
             content: self.state.label.to_string(),
             size: f32::from(self.size),
             bounds: Rectangle {
@@ -207,7 +209,7 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
                 width: bounds.width - bounds.height,
                 height: bounds.height,
             },
-            color: defaults.text.color,
+            color: style.text_color,
             font: Default::default(),
             horizontal_alignment: if self.is_input {
                 alignment::Horizontal::Left
@@ -215,11 +217,21 @@ impl<'a, Message: Clone> iced_native::Widget<Message, Renderer> for Widget<'a, M
                 alignment::Horizontal::Right
             },
             vertical_alignment: alignment::Vertical::Top,
-        };
+        });
+    }
 
-        let primitives = vec![slot, slot_set, label];
-
-        (Primitive::Group { primitives }, mouse_interaction)
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor_position: Point,
+        _viewport: &Rectangle,
+        _renderer: &Renderer,
+    ) -> mouse::Interaction {
+        if layout.bounds().contains(cursor_position) {
+            mouse::Interaction::Crosshair
+        } else {
+            mouse::Interaction::default()
+        }
     }
 
     fn hash_layout(&self, state: &mut Hasher) {

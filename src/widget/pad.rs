@@ -1,9 +1,9 @@
 use iced_native::{
     event::{self, Event},
-    layout, mouse, overlay, touch,
-    {Clipboard, Element, Hasher, Layout, Length, Padding, Point, Rectangle, Widget},
+    layout, mouse, overlay, renderer, touch,
+    {Clipboard, Element, Hasher, Layout, Length, Padding, Point, Rectangle, Shell, Widget},
 };
-use iced_wgpu::{Defaults, Primitive, Renderer};
+use iced_wgpu::Renderer;
 use std::{cell::Cell, hash::Hash};
 
 pub struct Pad<'a, Message> {
@@ -144,7 +144,7 @@ impl<'a, Message: Clone> Widget<Message, Renderer> for Pad<'a, Message> {
         cursor_position: Point,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
-        messages: &mut Vec<Message>,
+        shell: &mut Shell<Message>,
     ) -> event::Status {
         if !self.state.is_pressed {
             if let event::Status::Captured = self.content.on_event(
@@ -153,7 +153,7 @@ impl<'a, Message: Clone> Widget<Message, Renderer> for Pad<'a, Message> {
                 cursor_position,
                 renderer,
                 clipboard,
-                messages,
+                shell,
             ) {
                 return event::Status::Captured;
             }
@@ -169,7 +169,7 @@ impl<'a, Message: Clone> Widget<Message, Renderer> for Pad<'a, Message> {
                         self.state.is_pressed = true;
 
                         if let Some(on_press) = self.on_press.clone() {
-                            messages.push(on_press);
+                            shell.publish(on_press);
                         }
 
                         return event::Status::Captured;
@@ -185,7 +185,7 @@ impl<'a, Message: Clone> Widget<Message, Renderer> for Pad<'a, Message> {
                         self.state.is_pressed = false;
 
                         if bounds.contains(cursor_position) {
-                            messages.push(on_release);
+                            shell.publish(on_release);
                         }
 
                         return event::Status::Captured;
@@ -202,28 +202,40 @@ impl<'a, Message: Clone> Widget<Message, Renderer> for Pad<'a, Message> {
     fn draw(
         &self,
         renderer: &mut Renderer,
-        defaults: &Defaults,
+        style: &renderer::Style,
         layout: Layout<'_>,
         cursor_position: Point,
         _viewport: &Rectangle,
-    ) -> (Primitive, mouse::Interaction) {
+    ) {
         let bounds = layout.bounds();
         self.state.bounds.set(bounds);
 
         let content = &self.content;
         let layout = layout.children().next().unwrap();
-        let (content, _) = content.draw(renderer, defaults, layout, cursor_position, &bounds);
+        content.draw(renderer, style, layout, cursor_position, &bounds);
+    }
+
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor_position: Point,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        let bounds = layout.bounds();
+        self.state.bounds.set(bounds);
+
+        let content = &self.content;
+        let layout = layout.children().next().unwrap();
+        let _ = content.mouse_interaction(layout, cursor_position, viewport, renderer);
 
         let is_mouse_over = bounds.contains(cursor_position);
 
-        (
-            content,
-            if is_mouse_over {
-                self.interaction
-            } else {
-                mouse::Interaction::default()
-            },
-        )
+        if is_mouse_over {
+            self.interaction
+        } else {
+            mouse::Interaction::default()
+        }
     }
 
     fn hash_layout(&self, state: &mut Hasher) {
@@ -234,13 +246,18 @@ impl<'a, Message: Clone> Widget<Message, Renderer> for Pad<'a, Message> {
         self.content.hash_layout(state);
     }
 
-    fn overlay(&mut self, layout: Layout<'_>) -> Option<overlay::Element<'_, Message, Renderer>> {
-        self.content.overlay(layout.children().next().unwrap())
+    fn overlay(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+    ) -> Option<overlay::Element<'_, Message, Renderer>> {
+        self.content
+            .overlay(layout.children().next().unwrap(), renderer)
     }
 }
 
 impl<'a, Message: 'a + Clone> From<Pad<'a, Message>> for Element<'a, Message, Renderer> {
-    fn from(widget: Pad<'a, Message>) -> Element<'a, Message, Renderer> {
-        Element::new(widget)
+    fn from(widget: Pad<'a, Message>) -> Self {
+        Self::new(widget)
     }
 }

@@ -1,22 +1,20 @@
-use crate::builder::{
-    types::{F32_4, U32},
-    FunctionBuilder, ModuleBuilder, NodeBuilder,
-};
-use crate::node::{Event, Node, NodeDescriptor, Output, PortId, Type};
+use crate::builder::{types::F32_4, types::U32, FunctionBuilder, ModuleBuilder, NodeBuilder};
+use crate::node::{port, Event, Node, NodeElement, NodeId, NodeWidget, Output, Type};
 use naga::{
     Binding, BuiltIn, EntryPoint, Expression, Handle, Interpolation, Sampling, ShaderStage,
     Statement,
 };
 
-#[derive(Debug, Default)]
-pub struct Master {
-    pub position: Option<Output>,
-    pub color: Option<Output>,
-}
+pub struct Master(NodeWidget);
 
-impl NodeBuilder for Master {
-    fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>> {
-        None
+impl Default for Master {
+    fn default() -> Self {
+        Self(NodeWidget::new(
+            "master",
+            80,
+            &[("position", Type::Vector3), ("color", Type::Vector4)],
+            &[],
+        ))
     }
 }
 
@@ -46,7 +44,9 @@ impl Master {
             Binding::BuiltIn(BuiltIn::VertexIndex),
         );
 
-        let value = Some(nodes.expr(&mut function, self.position?)?);
+        let position = self.0.inputs_remote[0];
+
+        let value = Some(nodes.expr(&mut function, position?)?);
         function.push_statement(Statement::Return { value });
 
         Some(EntryPoint {
@@ -73,7 +73,9 @@ impl Master {
             },
         );
 
-        let value = Some(nodes.expr(&mut function, self.color?)?);
+        let color = self.0.inputs_remote[1];
+
+        let value = Some(nodes.expr(&mut function, color?)?);
         function.push_statement(Statement::Return { value });
 
         Some(EntryPoint {
@@ -87,20 +89,22 @@ impl Master {
 }
 
 impl Node for Master {
-    fn desc(&self) -> NodeDescriptor {
-        NodeDescriptor {
-            label: "master",
-            width: 80,
-            inputs: &[("position", Type::V4F), ("color", Type::V4F)],
-            outputs: &[],
-        }
+    fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>> {
+        None
+    }
+
+    fn inputs(&self) -> &[port::State] {
+        &self.0.ports.inputs
+    }
+    fn outputs(&self) -> &[port::State] {
+        &self.0.ports.outputs
     }
 
     fn update(&mut self, event: Event) {
-        match event {
-            Event::AttachInput(PortId(0), remote) => self.position = remote,
-            Event::AttachInput(PortId(1), remote) => self.color = remote,
-            _ => (),
-        }
+        self.0.update(event)
+    }
+
+    fn view(&mut self, node: NodeId) -> NodeElement {
+        self.0.view(node, None)
     }
 }

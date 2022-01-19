@@ -157,6 +157,7 @@ impl<T: Emit> Emit for [T; 4] {
                 width: 4,
             },
         });
+
         function.emit(Expression::Compose { ty, components })
     }
 }

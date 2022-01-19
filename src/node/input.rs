@@ -1,16 +1,9 @@
-pub mod basic;
-pub mod geometry;
-pub mod gradient;
-pub mod matrix;
-pub mod pbr;
-pub mod scene;
-pub mod texture;
-
 use crate::builder::{expr::Emit, FunctionBuilder, NodeBuilder};
-use crate::node::{Event, Node, NodeDescriptor, NodeId, NodeView, Output, PortId};
+use crate::node::{port, Event, Node, NodeElement, NodeId, NodeWidget, Output, PortId, Type};
 use crate::style;
 use crate::widget::slider;
-use iced_native::{widget::text_input, Column, Container, Element, Length};
+use iced_graphics::{Column, Container};
+use iced_native::Element;
 use iced_wgpu::Renderer;
 use naga::{Expression, Handle};
 
@@ -22,40 +15,64 @@ pub type Vector4 = [f64; 4];
 
 impl NodeBuilder for Float {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port() == PortId(0)).then(|| self.emit(function))
+        (output.port == PortId(0)).then(|| self.emit(function))
     }
 }
 
 impl NodeBuilder for Vector1 {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port() == PortId(0)).then(|| self.emit(function))
+        (output.port == PortId(0)).then(|| self.emit(function))
     }
 }
 
 impl NodeBuilder for Vector2 {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port() == PortId(0)).then(|| self.emit(function))
+        (output.port == PortId(0)).then(|| self.emit(function))
     }
 }
 
 impl NodeBuilder for Vector3 {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port() == PortId(0)).then(|| self.emit(function))
+        (output.port == PortId(0)).then(|| self.emit(function))
     }
 }
 
 impl NodeBuilder for Vector4 {
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        (output.port() == PortId(0)).then(|| self.emit(function))
+        (output.port == PortId(0)).then(|| self.emit(function))
     }
 }
 
-#[derive(Default, Debug)]
-pub struct Triangle;
+pub struct Triangle(NodeWidget);
 
-impl NodeBuilder for Triangle {
+impl Default for Triangle {
+    fn default() -> Self {
+        Self(NodeWidget::new(
+            "triangle",
+            75,
+            &[],
+            &[("out", super::Type::Vector4)],
+        ))
+    }
+}
+
+impl Node for Triangle {
+    fn inputs(&self) -> &[port::State] {
+        &self.0.ports.inputs
+    }
+    fn outputs(&self) -> &[port::State] {
+        &self.0.ports.outputs
+    }
+    fn update(&mut self, event: Event) {
+        self.0.update(event);
+    }
+
+    fn view(&mut self, node: NodeId) -> NodeElement {
+        self.0.view(node, None)
+    }
+
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        if output.port() == PortId(0) {
+        if output.port == PortId(0) {
             use crate::builder::expr::*;
 
             let vertex_index = FunctionArgument(0).emit(function);
@@ -77,12 +94,37 @@ impl NodeBuilder for Triangle {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Fullscreen;
+pub struct Fullscreen(NodeWidget);
 
-impl NodeBuilder for Fullscreen {
+impl Default for Fullscreen {
+    fn default() -> Self {
+        Self(NodeWidget::new(
+            "fullscreen",
+            75,
+            &[],
+            &[("out", super::Type::Vector4)],
+        ))
+    }
+}
+
+impl Node for Fullscreen {
+    fn inputs(&self) -> &[port::State] {
+        &self.0.ports.inputs
+    }
+    fn outputs(&self) -> &[port::State] {
+        &self.0.ports.outputs
+    }
+
+    fn update(&mut self, event: Event) {
+        self.0.update(event);
+    }
+
+    fn view(&mut self, node: NodeId) -> NodeElement {
+        self.0.view(node, None)
+    }
+
     fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        if output.port() == PortId(0) {
+        if output.port == PortId(0) {
             use crate::builder::expr::*;
 
             let vertex_index = FunctionArgument(0).emit(function);
@@ -106,86 +148,94 @@ impl NodeBuilder for Fullscreen {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Input {
-    state: [text_input::State; 4],
-    vector: Vector4,
-}
+pub struct Input(NodeWidget);
 
-impl NodeBuilder for Input {
-    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        self.vector.expr(function, output)
+impl Input {
+    pub fn new(ty: Type) -> Self {
+        let inputs = [
+            ("x", Type::Vector1),
+            ("y", Type::Vector1),
+            ("z", Type::Vector1),
+            ("w", Type::Vector1),
+        ];
+        let (label, inputs) = match ty {
+            Type::Vector1 => ("float", &inputs[0..1]),
+            Type::Vector2 => ("vector2", &inputs[0..2]),
+            Type::Vector3 => ("vector3", &inputs[0..3]),
+            Type::Vector4 => ("vector4", &inputs[0..4]),
+        };
+        Self(NodeWidget::new(label, 100, inputs, &[("out", ty)]))
     }
 }
 
 impl Node for Input {
-    fn desc(&self) -> NodeDescriptor<'_> {
-        NodeDescriptor {
-            label: "vec4<f32>",
-            width: 100,
-            inputs: &[],
-            outputs: &[("out", super::Type::V4F)],
-        }
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        let vector = [
+            self.0.defaults[0].value[0],
+            self.0.defaults[1].value[0],
+            self.0.defaults[2].value[0],
+            self.0.defaults[3].value[0],
+        ];
+        vector.expr(function, output)
     }
 
+    fn inputs(&self) -> &[port::State] {
+        &self.0.ports.inputs
+    }
+    fn outputs(&self) -> &[port::State] {
+        &self.0.ports.outputs
+    }
     fn update(&mut self, event: Event) {
-        if let Event::Dynamic(message) = event {
-            let (index, value) = super::downcast_message::<(usize, f64)>(message).unwrap();
-            self.vector[index] = value;
-        }
+        self.0.update(event)
     }
-
-    fn view(&mut self, _node: NodeId) -> NodeView {
-        let col = Column::new().padding([2, 2]).spacing(2);
-
-        self.state
-            .iter_mut()
-            .zip(self.vector.iter())
-            .enumerate()
-            .fold(col, |col, (i, (state, value))| {
-                let value = format!("{:?}", *value);
-                let input = style::Node::input(state, "", &value, move |s| {
-                    super::upcast_message((i, s.parse::<f64>().unwrap_or(0.0)))
-                });
-                col.push(input.width(Length::Fill))
-            })
-            .into()
+    fn view(&mut self, node: NodeId) -> NodeElement {
+        self.0.view(node, None)
     }
 }
 
-#[derive(Debug, Default)]
 pub struct Color {
+    base: NodeWidget,
     sliders: [slider::State; 4],
     color: iced_wgpu::wgpu::Color,
     vector: Vector4,
 }
 
-impl NodeBuilder for Color {
-    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
-        self.vector.expr(function, output)
+impl Default for Color {
+    fn default() -> Self {
+        Self {
+            base: NodeWidget::new("color", 100, &[], &[("out", super::Type::Vector4)]),
+            sliders: Default::default(),
+            color: iced_wgpu::wgpu::Color::default(),
+            vector: Default::default(),
+        }
     }
 }
 
 impl Node for Color {
-    fn desc(&self) -> NodeDescriptor<'_> {
-        NodeDescriptor {
-            label: "color",
-            width: 100,
-            inputs: &[],
-            outputs: &[("out", super::Type::V4F)],
-        }
+    fn expr(&self, function: &mut FunctionBuilder, output: Output) -> Option<Handle<Expression>> {
+        self.vector.expr(function, output)
+    }
+
+    fn inputs(&self) -> &[port::State] {
+        &self.base.ports.inputs
+    }
+    fn outputs(&self) -> &[port::State] {
+        &self.base.ports.outputs
     }
 
     fn update(&mut self, event: Event) {
-        if let Event::Dynamic(message) = event {
-            self.color = super::downcast_message::<iced_wgpu::wgpu::Color>(message).unwrap();
-            self.vector = [self.color.r, self.color.g, self.color.b, self.color.a];
+        match event {
+            Event::Dynamic(message) => {
+                self.color = super::downcast_message::<iced_wgpu::wgpu::Color>(message).unwrap();
+                self.vector = [self.color.r, self.color.g, self.color.b, self.color.a];
+            }
+            _ => self.base.update(event),
         }
     }
 
-    fn view(&mut self, _node: NodeId) -> NodeView {
-        Container::new(rgba_sliders(&mut self.sliders, self.color).map(super::upcast_message))
-            .into()
+    fn view(&mut self, node: NodeId) -> NodeElement {
+        let controls = Container::new(rgba_sliders(&mut self.sliders, self.color));
+        self.base.view(node, Some(controls.into()))
     }
 }
 
@@ -193,7 +243,7 @@ impl Node for Color {
 fn rgba_sliders(
     sliders: &mut [slider::State; 4],
     color: iced_wgpu::wgpu::Color,
-) -> Element<iced_wgpu::wgpu::Color, Renderer> {
+) -> Element<Box<dyn super::DynMessage>, Renderer> {
     use iced_wgpu::wgpu::Color;
 
     let [r, g, b, a] = sliders;
@@ -205,47 +255,5 @@ fn rgba_sliders(
 
     let col = Column::new().padding([2, 2]).spacing(2);
 
-    Element::from(col.push(r).push(g).push(b).push(a))
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Position;
-
-impl NodeBuilder for Position {
-    fn expr(&self, _function: &mut FunctionBuilder, _output: Output) -> Option<Handle<Expression>> {
-        None
-    }
-}
-
-impl Node for Position {
-    fn desc(&self) -> NodeDescriptor<'_> {
-        NodeDescriptor {
-            label: "position",
-            width: 100,
-            inputs: &[],
-            outputs: &[("out", super::Type::V4F)],
-        }
-    }
-}
-
-impl Node for Triangle {
-    fn desc(&self) -> NodeDescriptor<'_> {
-        NodeDescriptor {
-            label: "triangle",
-            width: 75,
-            inputs: &[],
-            outputs: &[("out", super::Type::V4F)],
-        }
-    }
-}
-
-impl Node for Fullscreen {
-    fn desc(&self) -> NodeDescriptor<'_> {
-        NodeDescriptor {
-            label: "fullscreen",
-            width: 75,
-            inputs: &[],
-            outputs: &[("out", super::Type::V4F)],
-        }
-    }
+    Element::from(col.push(r).push(g).push(b).push(a)).map(super::upcast_message)
 }
