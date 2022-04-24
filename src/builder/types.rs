@@ -1,3 +1,5 @@
+use super::expr::{Emit, EmitResult};
+use crate::builder::FnBuilder;
 use naga::{
     front::Typifier,
     proc::{ResolveContext, ResolveError},
@@ -5,34 +7,63 @@ use naga::{
     VectorSize,
 };
 
-const fn scalar(kind: ScalarKind, width: u8) -> Type {
-    Type {
-        name: None,
-        inner: TypeInner::Scalar { kind, width },
-    }
+pub struct BaseTypes {
+    pub bool: Handle<Type>,
+    pub bool2: Handle<Type>,
+    pub bool3: Handle<Type>,
+    pub bool4: Handle<Type>,
+
+    pub u32: Handle<Type>,
+    pub u32x2: Handle<Type>,
+    pub u32x3: Handle<Type>,
+    pub u32x4: Handle<Type>,
+
+    pub i32: Handle<Type>,
+    pub i32x2: Handle<Type>,
+    pub i32x3: Handle<Type>,
+    pub i32x4: Handle<Type>,
+
+    pub f32: Handle<Type>,
+    pub f32x2: Handle<Type>,
+    pub f32x3: Handle<Type>,
+    pub f32x4: Handle<Type>,
 }
 
-const fn vector(kind: ScalarKind, size: VectorSize, width: u8) -> Type {
-    Type {
-        name: None,
-        inner: TypeInner::Vector { size, kind, width },
+impl BaseTypes {
+    pub fn new(module: &mut super::ModuleBuilder) -> Self {
+        const fn scalar(kind: ScalarKind, width: u8) -> Type {
+            let inner = TypeInner::Scalar { kind, width };
+            Type { name: None, inner }
+        }
+
+        const fn vector(kind: ScalarKind, size: VectorSize, width: u8) -> Type {
+            let inner = TypeInner::Vector { size, kind, width };
+            Type { name: None, inner }
+        }
+
+        Self {
+            bool: module.insert_type(scalar(ScalarKind::Bool, naga::BOOL_WIDTH)),
+            bool2: module.insert_type(vector(ScalarKind::Bool, VectorSize::Bi, naga::BOOL_WIDTH)),
+            bool3: module.insert_type(vector(ScalarKind::Bool, VectorSize::Tri, naga::BOOL_WIDTH)),
+            bool4: module.insert_type(vector(ScalarKind::Bool, VectorSize::Quad, naga::BOOL_WIDTH)),
+
+            u32: module.insert_type(scalar(ScalarKind::Uint, 4)),
+            u32x2: module.insert_type(vector(ScalarKind::Uint, VectorSize::Bi, 4)),
+            u32x3: module.insert_type(vector(ScalarKind::Uint, VectorSize::Tri, 4)),
+            u32x4: module.insert_type(vector(ScalarKind::Uint, VectorSize::Quad, 4)),
+
+            i32: module.insert_type(scalar(ScalarKind::Sint, 4)),
+            i32x2: module.insert_type(vector(ScalarKind::Sint, VectorSize::Bi, 4)),
+            i32x3: module.insert_type(vector(ScalarKind::Sint, VectorSize::Tri, 4)),
+            i32x4: module.insert_type(vector(ScalarKind::Sint, VectorSize::Quad, 4)),
+
+            f32: module.insert_type(scalar(ScalarKind::Float, 4)),
+            f32x2: module.insert_type(vector(ScalarKind::Float, VectorSize::Bi, 4)),
+            f32x3: module.insert_type(vector(ScalarKind::Float, VectorSize::Tri, 4)),
+            f32x4: module.insert_type(vector(ScalarKind::Float, VectorSize::Quad, 4)),
+        }
     }
 }
-
-pub const U32: Type = scalar(ScalarKind::Uint, 4);
-pub const U32_2: Type = vector(ScalarKind::Uint, VectorSize::Bi, 4);
-pub const U32_3: Type = vector(ScalarKind::Uint, VectorSize::Tri, 4);
-pub const U32_4: Type = vector(ScalarKind::Uint, VectorSize::Quad, 4);
-
-pub const I32: Type = scalar(ScalarKind::Sint, 4);
-pub const I32_2: Type = vector(ScalarKind::Sint, VectorSize::Bi, 4);
-pub const I32_3: Type = vector(ScalarKind::Sint, VectorSize::Tri, 4);
-pub const I32_4: Type = vector(ScalarKind::Sint, VectorSize::Quad, 4);
-
-pub const F32: Type = scalar(ScalarKind::Float, 4);
-pub const F32_2: Type = vector(ScalarKind::Float, VectorSize::Bi, 4);
-pub const F32_3: Type = vector(ScalarKind::Float, VectorSize::Tri, 4);
-pub const F32_4: Type = vector(ScalarKind::Float, VectorSize::Quad, 4);
 
 pub fn extract_type<'a>(
     ifier: &'a mut Typifier,
@@ -52,6 +83,7 @@ pub fn extract_type<'a>(
     Ok(ifier.get(expr_handle, &module.types))
 }
 
+/*
 pub fn is_scalar(ty: &TypeInner) -> Option<ScalarKind> {
     match ty {
         TypeInner::Scalar { kind, .. } => Some(*kind),
@@ -66,24 +98,15 @@ pub fn is_vector(ty: &TypeInner) -> Option<(ScalarKind, VectorSize)> {
     }
 }
 
-pub fn is_scalar_or_vector(ty: &TypeInner) -> Option<VectorKind> {
-    match ty {
-        TypeInner::Scalar { .. } => Some(VectorKind::V1),
-        TypeInner::Vector { size, .. } => Some(match size {
-            VectorSize::Bi => VectorKind::V2,
-            VectorSize::Tri => VectorKind::V3,
-            VectorSize::Quad => VectorKind::V4,
-        }),
-        _ => None,
-    }
-}
-
+#[derive(Clone, Copy)]
 pub enum MatrixKind {
     M2,
     M3,
     M4,
 }
+*/
 
+#[derive(Clone, Copy)]
 pub enum VectorKind {
     V1,
     V2,
@@ -91,49 +114,121 @@ pub enum VectorKind {
     V4,
 }
 
-pub fn resolve_vector(
-    function: &mut super::FunctionBuilder,
-    expr: Handle<Expression>,
-    src: VectorKind,
-    dst: VectorKind,
-) -> Handle<Expression> {
-    use super::expr::Emit;
-    use VectorKind::*;
+impl VectorKind {
+    pub fn parse(ty: &TypeInner) -> Option<Self> {
+        match ty {
+            TypeInner::Scalar { .. } => Some(VectorKind::V1),
+            TypeInner::Vector { size, .. } => Some(match size {
+                VectorSize::Bi => VectorKind::V2,
+                VectorSize::Tri => VectorKind::V3,
+                VectorSize::Quad => VectorKind::V4,
+            }),
+            _ => None,
+        }
+    }
+}
 
-    let (zero, one) = (0f64.emit(function), 1f64.emit(function));
-    let pattern = [
-        SwizzleComponent::X,
-        SwizzleComponent::Y,
-        SwizzleComponent::Z,
-        SwizzleComponent::W,
-    ];
+impl VectorKind {
+    pub fn min(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::V1, _) | (_, Self::V1) => Self::V1,
+            (Self::V2, _) | (_, Self::V2) => Self::V2,
+            (Self::V3, _) | (_, Self::V3) => Self::V3,
+            (Self::V4, Self::V4) => Self::V4,
+        }
+    }
 
-    match (src, dst) {
-        // same
-        (V1, V1) | (V2, V2) | (V3, V3) | (V4, V4) => expr,
+    pub fn max(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::V4, _) | (_, Self::V4) => Self::V4,
+            (Self::V3, _) | (_, Self::V3) => Self::V3,
+            (Self::V2, _) | (_, Self::V2) => Self::V2,
+            (Self::V1, Self::V1) => Self::V1,
+        }
+    }
 
-        // promoting
-        (V1, V2) => [expr, zero].emit(function),
-        (V1, V3) => [expr, zero, zero].emit(function),
-        (V1, V4) => [expr, zero, zero, one].emit(function),
-        (V2, V3) => [expr, zero].emit(function),
-        (V2, V4) => [expr, zero, one].emit(function),
-        (V3, V4) => [expr, one].emit(function),
+    pub fn splat<T: Emit + Copy>(&self, function: &mut FnBuilder, value: T) -> EmitResult {
+        match self {
+            VectorKind::V1 => value.emit(function),
+            VectorKind::V2 => [value, value].emit(function),
+            VectorKind::V3 => [value, value, value].emit(function),
+            VectorKind::V4 => [value, value, value, value].emit(function),
+        }
+    }
+}
 
-        // truncating
-        (V2, V1) | (V3, V1) | (V4, V1) => function.emit(Expression::AccessIndex {
-            base: expr,
-            index: 0,
-        }),
-        (V3, V2) | (V4, V2) => function.emit(Expression::Swizzle {
-            size: VectorSize::Bi,
-            vector: expr,
-            pattern,
-        }),
-        (V4, V3) => function.emit(Expression::Swizzle {
-            size: VectorSize::Tri,
-            vector: expr,
-            pattern,
-        }),
+impl<'a, 'storage> FnBuilder<'a, 'storage> {
+    pub fn resolve_vector(
+        &mut self,
+        expr: Handle<Expression>,
+        src: VectorKind,
+        dst: VectorKind,
+    ) -> EmitResult {
+        use super::expr::Float;
+        use VectorKind::*;
+
+        let function = self;
+
+        let zero = Float(0.0).emit(function)?;
+        let one = Float(1.0).emit(function)?;
+
+        macro_rules! swizzle {
+            ($x:ident, $y:ident, $z:ident, $w:ident) => {
+                [
+                    swizzle!(@$x),
+                    swizzle!(@$y),
+                    swizzle!(@$z),
+                    swizzle!(@$w),
+                ]
+            };
+
+            (@x) => { SwizzleComponent::X };
+            (@y) => { SwizzleComponent::Y };
+            (@z) => { SwizzleComponent::Z };
+            (@w) => { SwizzleComponent::W };
+        }
+
+        macro_rules! expr_swizzle {
+            ($vector:expr, $size:ident, [$x:ident, $y:ident, $z:ident, $w:ident]) => {
+                Expression::Swizzle {
+                    vector: $vector,
+                    size: naga::VectorSize::$size,
+                    pattern: swizzle!($x, $y, $z, $w),
+                }
+            };
+        }
+
+        Ok(match (src, dst) {
+            // same
+            (V1, V1) | (V2, V2) | (V3, V3) | (V4, V4) => expr,
+
+            // promoting
+            (V1, V2) => [expr, zero].emit(function)?,
+            (V1, V3) => [expr, zero, zero].emit(function)?,
+            (V1, V4) => [expr, zero, zero, one].emit(function)?,
+
+            (V2, V3) => {
+                let x = function.access_index(expr, 0);
+                let y = function.access_index(expr, 1);
+                [x, y, zero].emit(function)?
+            }
+            (V2, V4) => {
+                let x = function.access_index(expr, 0);
+                let y = function.access_index(expr, 1);
+                [x, y, zero, one].emit(function)?
+            }
+
+            (V3, V4) => {
+                let x = function.access_index(expr, 0);
+                let y = function.access_index(expr, 1);
+                let z = function.access_index(expr, 2);
+                [x, y, z, one].emit(function)?
+            }
+
+            // truncating
+            (V2, V1) | (V3, V1) | (V4, V1) => function.access_index(expr, 0),
+            (V3, V2) | (V4, V2) => function.emit(expr_swizzle!(expr, Bi, [x, y, z, w])),
+            (V4, V3) => function.emit(expr_swizzle!(expr, Tri, [x, y, z, w])),
+        })
     }
 }

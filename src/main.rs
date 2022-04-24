@@ -1,327 +1,465 @@
-#![feature(const_fn_floating_point_arithmetic)]
-
-use futures::task::SpawnExt;
-use iced_futures::Executor;
-use iced_native::futures::{
-    channel::mpsc,
-    task::{Context, Poll},
-    Sink,
-};
-use iced_native::{clipboard, command, window, Runtime};
-use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
-use iced_winit::{conversion, futures, program, winit, Clipboard, Debug, Size};
-use std::pin::Pin;
+use crate::app::{RenderPass, ScreenDescriptor};
+use crate::global::Global;
+use crate::hierarchy::Hierarchy;
+use crate::inspector::Inspector;
+use std::future::Future;
+use std::iter;
+use std::time::{Duration, Instant};
 use winit::{
-    dpi::PhysicalPosition,
-    event::{Event, ModifiersState, WindowEvent},
+    dpi::PhysicalSize,
+    event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
+    platform::run_return::EventLoopExtRunReturn,
+    window::{Window, WindowBuilder},
 };
 
-pub mod builder;
-pub mod controls;
-pub mod graph;
-pub mod node;
-pub mod scene;
-pub mod style;
-pub mod widget;
+mod global;
+mod hierarchy;
+mod inspector;
 
-use crate::{controls::Controls, scene::Scene};
+mod app;
+mod blender;
+mod builder;
+mod framebuffer;
+mod graph;
+mod nodes;
+pub mod workspace;
+
+const INITIAL_WIDTH: u32 = 1920;
+const INITIAL_HEIGHT: u32 = 1080;
+
+use crate::framebuffer::Framebuffer;
+use crate::workspace::Workspace;
+
+pub struct Spawner<'a> {
+    executor: async_executor::LocalExecutor<'a>,
+}
+
+impl<'a> Spawner<'a> {
+    fn new() -> Self {
+        Self {
+            executor: async_executor::LocalExecutor::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn spawn_local(&self, future: impl Future<Output = ()> + 'a) {
+        self.executor.spawn(future).detach();
+    }
+
+    fn run_until_stalled(&self) {
+        while self.executor.try_tick() {}
+    }
+}
+
+fn enable_tracing() {
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    let format = fmt::format()
+        .without_time()
+        .with_target(true)
+        .with_source_location(true)
+        .compact();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .event_format(format)
+        .init();
+}
 
 fn main() {
-    env_logger::init();
+    enable_tracing();
 
-    // Initialize winit
-    let event_loop: EventLoop<crate::controls::Message> = EventLoop::with_user_event();
-    let proxy = event_loop.create_proxy();
-
-    let mut runtime = {
-        let proxy = Proxy::new(event_loop.create_proxy());
-        let executor = iced_futures::executor::Smol::new().unwrap();
-
-        Runtime::new(executor, proxy)
-    };
-
-    let window = winit::window::WindowBuilder::new()
-        .with_title("WGSL ShaderLab")
-        .with_inner_size(winit::dpi::PhysicalSize::new(1920u32, 1080))
+    let mut event_loop: EventLoop<()> = EventLoop::with_user_event();
+    let window = WindowBuilder::new()
+        .with_decorations(true)
+        .with_resizable(true)
+        .with_transparent(false)
+        .with_title("Shaderlab")
+        .with_inner_size(PhysicalSize {
+            width: INITIAL_WIDTH,
+            height: INITIAL_HEIGHT,
+        })
         .build(&event_loop)
         .unwrap();
 
-    let physical_size = window.inner_size();
-    let mut viewport = Viewport::with_physical_size(
-        Size::new(physical_size.width, physical_size.height),
-        window.scale_factor(),
-    );
-    let mut cursor_position = PhysicalPosition::new(-1.0, -1.0);
-    let mut modifiers = ModifiersState::default();
-    let mut clipboard = Clipboard::connect(&window);
-
-    // Initialize wgpu
     let instance = wgpu::Instance::new(wgpu::Backends::PRIMARY);
     let surface = unsafe { instance.create_surface(&window) };
 
-    let (device, queue) = futures::executor::block_on(async {
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .expect("Request adapter");
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: Some(&surface),
+        force_fallback_adapter: false,
+    }))
+    .unwrap();
 
-        adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
-                },
-                None,
-            )
-            .await
-            .expect("Request device")
-    });
+    let desc = wgpu::DeviceDescriptor {
+        features: wgpu::Features::default(),
+        limits: wgpu::Limits::default(),
+        label: None,
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&desc, None)).unwrap();
 
-    let format = wgpu::TextureFormat::Bgra8UnormSrgb;
+    let surface_format = surface.get_preferred_format(&adapter).unwrap();
+    let sample_count = 4;
 
-    {
+    let mut fb = {
         let size = window.inner_size();
 
-        surface.configure(
-            &device,
-            &wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format,
-                width: size.width,
-                height: size.height,
-                present_mode: wgpu::PresentMode::Mailbox,
-            },
-        )
-    }
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width: size.width,
+            height: size.height,
+            present_mode: wgpu::PresentMode::Mailbox,
+        };
 
-    let mut resized = false;
-
-    // Initialize staging belt and local pool
-    let mut staging_belt = wgpu::util::StagingBelt::new(5 * 1024);
-    let mut local_pool = futures::executor::LocalPool::new();
-
-    // Initialize scene and GUI controls
-    let mut scene = Scene::default();
-    let controls = Controls::new();
-
-    // Initialize iced
-    let mut debug = Debug::new();
-    let settings = Settings {
-        antialiasing: Some(iced_wgpu::Antialiasing::MSAAx4),
-        ..Settings::default()
+        Framebuffer::new(&device, surface, sample_count, config)
     };
-    let mut renderer = Renderer::new(Backend::new(&device, settings, format));
 
-    let mut state =
-        program::State::new(controls, viewport.logical_size(), &mut renderer, &mut debug);
+    let mut app = {
+        use crate::app::*;
+        use egui::{Color32, Rect, Ui};
 
-    // Run event loop
-    event_loop.run(move |event, _, control_flow| {
-        // You should change this if you want to render continuosly
-        *control_flow = ControlFlow::Wait;
+        struct SampleTab;
 
+        impl TabInner for SampleTab {
+            fn ui(&mut self, ui: &mut Ui, style: &Style, global: &mut Global) {
+                let rect = ui.available_rect_before_wrap();
+
+                let sep = rect.min.y + 25.0;
+
+                let body_top = rect.intersect(Rect::everything_above(sep));
+                ui.painter().rect_filled(body_top, 0.0, style.tab_base);
+
+                let body = rect.intersect(Rect::everything_below(sep));
+                ui.painter()
+                    .rect_filled(body, 0.0, Color32::from_gray(0x28));
+            }
+        }
+
+        struct NodeTodo;
+
+        impl TabInner for NodeTodo {
+            fn ui(&mut self, ui: &mut Ui, style: &Style, global: &mut Global) {
+                let rect = ui.available_rect_before_wrap();
+                let bg = Color32::from_gray(0x28);
+                ui.painter().rect_filled(rect, 0.0, bg);
+                crate::nodes::nodes(ui);
+            }
+        }
+
+        let node_tree = NodeTree::new(&device, &window, surface_format, sample_count);
+        let node_tree = Tab::new(crate::blender::NODETREE, "Node Tree", node_tree);
+        let scene = Tab::new(crate::blender::VIEW3D, "Scene", SampleTab);
+        let material = Tab::new(crate::blender::MATERIAL, "Material", NodeTodo);
+
+        let outliner = Tab::new(crate::blender::OUTLINER, "Hierarchy", Hierarchy::default());
+        let properties = Tab::new(
+            crate::blender::PROPERTIES,
+            "Inspector",
+            Inspector::default(),
+        );
+
+        let root = TreeNode::leaf_with(vec![node_tree, scene, material]);
+        let mut app = crate::app::App::new(&device, &window, surface_format, sample_count, root);
+
+        let one = TreeNode::leaf_with(vec![properties]);
+        let two = TreeNode::leaf_with(vec![outliner]);
+        let [_, _b] = app.tree.split(NodeIndex::root(), one, Split::Right);
+        let [_, _b] = app.tree.split(_b, two, Split::Above);
+
+        app
+    };
+
+    let mut last_update_inst = Instant::now();
+    let spawner = Spawner::new();
+
+    event_loop.run_return(move |event, _, control_flow| {
         match event {
             Event::NewEvents(_) => (),
-            Event::WindowEvent { event, .. } => {
-                match event {
-                    WindowEvent::CursorMoved { position, .. } => cursor_position = position,
-                    WindowEvent::ModifiersChanged(new_modifiers) => modifiers = new_modifiers,
-                    WindowEvent::Resized(new_size) => {
-                        viewport = Viewport::with_physical_size(
-                            Size::new(new_size.width, new_size.height),
-                            window.scale_factor(),
-                        );
-
-                        resized = true;
+            Event::WindowEvent { event, .. } => match event {
+                // Resize with 0 width and height is used by winit to signal a minimize event on Windows.
+                // See: https://github.com/rust-windowing/winit/issues/208
+                // This solves an issue where the app would panic when minimizing on Windows.
+                WindowEvent::Resized(size) => {
+                    if size.width > 0 && size.height > 0 {
+                        fb.set_size(&device, size.width, size.height);
                     }
-                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                    _ => {}
                 }
-
-                // Map window event to iced event
-                if let Some(event) =
-                    iced_winit::conversion::window_event(&event, window.scale_factor(), modifiers)
-                {
-                    state.queue_event(event);
-                }
-            }
-
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                // Pass the winit events to the platform integration.
+                event => app.on_event(event),
+            },
             Event::DeviceEvent { .. } => (),
-            Event::Suspended => (),
-            Event::Resumed => (),
-
-            Event::UserEvent(message) => state.queue_message(message),
-
-            Event::MainEventsCleared => {
-                // If there are events pending
-                if !state.is_queue_empty() {
-                    // We update iced
-                    if let Some(command) = state.update(
-                        viewport.logical_size(),
-                        conversion::cursor_position(cursor_position, viewport.scale_factor()),
-                        &mut renderer,
-                        &mut clipboard,
-                        &mut debug,
-                    ) {
-                        for action in command.actions() {
-                            match action {
-                                command::Action::Future(future) => runtime.spawn(future),
-
-                                command::Action::Clipboard(action) => match action {
-                                    clipboard::Action::Read(tag) => {
-                                        let message = tag(clipboard.read());
-
-                                        proxy
-                                            .send_event(message)
-                                            .expect("Send message to event loop");
-                                    }
-                                    clipboard::Action::Write(contents) => {
-                                        clipboard.write(contents);
-                                    }
-                                },
-                                command::Action::Window(action) => match action {
-                                    window::Action::Resize { width, height } => {
-                                        window.set_inner_size(winit::dpi::LogicalSize {
-                                            width,
-                                            height,
-                                        });
-                                    }
-                                    window::Action::Move { x, y } => {
-                                        window.set_outer_position(winit::dpi::LogicalPosition {
-                                            x,
-                                            y,
-                                        });
-                                    }
-                                },
-                            }
-                        }
-                    }
-
-                    // and request a redraw
-                    window.request_redraw();
-                }
-            }
-            Event::RedrawRequested(_) => {
-                if resized {
-                    let size = window.inner_size();
-
-                    surface.configure(
-                        &device,
-                        &wgpu::SurfaceConfiguration {
-                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                            format,
-                            width: size.width,
-                            height: size.height,
-                            present_mode: wgpu::PresentMode::Mailbox,
-                        },
-                    );
-
-                    resized = false;
-                }
-
-                let frame = if let Ok(frame) = surface.get_current_texture() {
-                    frame
-                } else {
-                    println!("redraw");
-                    window.request_redraw();
-                    return;
+            Event::UserEvent(_) => window.request_redraw(),
+            Event::Suspended | Event::Resumed | Event::MainEventsCleared => (),
+            Event::RedrawRequested(..) => {
+                let (target, frame) = match fb.next() {
+                    Ok(frame) => frame,
+                    // This error occurs when the app is minimized on Windows.
+                    // Silently return here to prevent spamming the console with:
+                    // "The underlying surface has changed, and therefore the swap chain must be updated"
+                    Err(wgpu::SurfaceError::Outdated) => return,
+                    Err(err) => return eprintln!("Dropped frame with error: {}", err),
                 };
 
-                let target = frame.texture.create_view(&Default::default());
+                let target = target.as_ref();
 
-                let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                let mut encoder = device.create_command_encoder(&Default::default());
 
-                let program = state.program();
+                let repaint = app
+                    .run(&window, &device, &queue, &mut encoder, target)
+                    .unwrap();
 
-                {
-                    // We clear the frame
-                    let mut render_pass = scene.clear(&target, &mut encoder);
-
-                    // Draw the scene
-                    scene.draw(
-                        &device,
-                        &mut render_pass,
-                        program.workspace() * window.scale_factor() as f32,
-                        program.source(),
-                    );
-                }
-
-                // And then iced on top
-                renderer.with_primitives(|backend, primitive| {
-                    backend.present(
-                        &device,
-                        &mut staging_belt,
-                        &mut encoder,
-                        &target,
-                        primitive,
-                        &viewport,
-                        &debug.overlay(),
-                    );
-                });
-
-                // Then we submit the work
-                staging_belt.finish();
-                queue.submit(Some(encoder.finish()));
+                queue.submit(iter::once(encoder.finish()));
                 frame.present();
 
-                // Update the mouse cursor
-
-                window.set_cursor_icon(iced_winit::conversion::mouse_interaction(
-                    state.mouse_interaction(),
-                ));
-
-                // And recall staging buffers
-                local_pool
-                    .spawner()
-                    .spawn(staging_belt.recall())
-                    .expect("Recall staging buffers");
-
-                local_pool.run_until_stalled();
+                // Suppport reactive on windows only, but not on linux.
+                *control_flow = if repaint {
+                    ControlFlow::Poll
+                } else {
+                    ControlFlow::Wait
+                };
             }
-            Event::RedrawEventsCleared => (),
+
+            Event::RedrawEventsCleared => {
+                let target_frametime = Duration::from_secs_f64(1.0 / 60.0);
+                let now = Instant::now();
+                let time_since_last_frame = now - last_update_inst;
+                if time_since_last_frame >= target_frametime {
+                    window.request_redraw();
+                    last_update_inst = now;
+                } else {
+                    *control_flow =
+                        ControlFlow::WaitUntil(now + target_frametime - time_since_last_frame)
+                };
+
+                spawner.run_until_stalled();
+            }
+
             Event::LoopDestroyed => (),
-            Event::PlatformSpecific(ps) => println!("{:?}", ps),
         }
-    })
+    });
 }
 
-/// An event loop proxy that implements `Sink`.
-#[derive(Clone, Debug)]
-pub struct Proxy<Message: 'static> {
-    raw: winit::event_loop::EventLoopProxy<Message>,
+pub fn fuck_ref<'a, T>(ptr: &T) -> &'a T {
+    unsafe { &*(ptr as *const T) }
 }
 
-impl<Message: 'static> Proxy<Message> {
-    /// Creates a new [`Proxy`] from an `EventLoopProxy`.
-    pub fn new(raw: winit::event_loop::EventLoopProxy<Message>) -> Self {
-        Self { raw }
+pub fn fuck_mut<'a, T>(ptr: &mut T) -> &'a mut T {
+    unsafe { &mut *(ptr as *mut T) }
+}
+
+// TODO: Stable since Rust version 1.62.0
+pub fn total_cmp(lhs: &f32, rhs: &f32) -> std::cmp::Ordering {
+    let mut lhs = lhs.to_bits() as i32;
+    let mut rhs = rhs.to_bits() as i32;
+    lhs ^= (((lhs >> 31) as u32) >> 1) as i32;
+    rhs ^= (((rhs >> 31) as u32) >> 1) as i32;
+    lhs.cmp(&rhs)
+}
+
+pub struct NodeTree {
+    pub workspace: Workspace,
+    pub context: egui::Context,
+    pub state: egui_winit::State,
+    pub renderpass: RenderPass,
+
+    pub zoom_level: f32,
+
+    pub raw_mouse_position: Option<egui::Pos2>,
+}
+
+impl NodeTree {
+    pub fn new(
+        device: &wgpu::Device,
+        window: &Window,
+        output_format: wgpu::TextureFormat,
+        sample_count: u32,
+    ) -> Self {
+        let limits = device.limits();
+        let max_texture_side = limits.max_texture_dimension_2d as usize;
+
+        Self {
+            workspace: Workspace::default(),
+            state: egui_winit::State::new(max_texture_side, window),
+            renderpass: RenderPass::new(device, output_format, sample_count),
+            context: {
+                let context = egui::Context::default();
+                context.set_fonts(app::fonts_with_blender());
+                context
+            },
+
+            zoom_level: 1.0 / window.scale_factor() as f32,
+            raw_mouse_position: None,
+        }
+    }
+
+    fn adjust_zoom(&mut self, zoom_delta: f32, point: egui::Vec2) {
+        if !self.context.wants_pointer_input() {
+            let zoom_clamped = (self.zoom_level + zoom_delta).clamp(0.25, 2.0);
+            let zoom_delta = zoom_clamped - self.zoom_level;
+            self.zoom_level += zoom_delta;
+            self.workspace.pan_offset += point * zoom_delta;
+        }
     }
 }
 
-impl<Message: 'static> Sink<Message> for Proxy<Message> {
-    type Error = mpsc::SendError;
-
-    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
+impl app::TabInner for NodeTree {
+    fn ui(&mut self, ui: &mut egui::Ui, _style: &app::Style, global: &mut Global) {
+        let rect = ui.available_rect_before_wrap();
+        let bg = egui::Color32::from_gray(0x20);
+        ui.painter().rect_filled(rect, 0.0, bg);
     }
 
-    fn start_send(self: Pin<&mut Self>, message: Message) -> Result<(), Self::Error> {
-        let _ = self.raw.send_event(message);
-        Ok(())
+    fn on_event(
+        &mut self,
+        event: &winit::event::WindowEvent<'static>,
+        viewport: egui::Rect,
+        parent_scale: f32,
+    ) {
+        use crate::app::panel::{rect_scale, viewport_relative_position};
+
+        let mut event = event.clone();
+
+        // Copy event so we can modify it locally
+        let mouse_in_viewport = self
+            .raw_mouse_position
+            .map(|pos| rect_scale(viewport, parent_scale).contains(pos))
+            .unwrap_or(false);
+
+        #[allow(clippy::single_match)]
+        match event {
+            // Filter out scaling / resize events
+            winit::event::WindowEvent::Resized(_)
+            | winit::event::WindowEvent::ScaleFactorChanged { .. } => return,
+            // Hijack mouse events so they are relative to the viewport and account for zoom level.
+            winit::event::WindowEvent::CursorMoved {
+                ref mut position, ..
+            } => {
+                self.raw_mouse_position =
+                    Some(egui::Pos2::new(position.x as f32, position.y as f32));
+                /*
+                *position = viewport_relative_position_winit(
+                    *position,
+                    parent_scale,
+                    viewport,
+                    self.zoom_level,
+                );
+                    */
+            }
+            winit::event::WindowEvent::MouseWheel { delta, .. } if mouse_in_viewport => {
+                let mouse_pos = if let Some(raw_pos) = self.raw_mouse_position {
+                    viewport_relative_position(raw_pos, parent_scale, viewport, 1.0).to_vec2()
+                } else {
+                    egui::Vec2::ZERO
+                };
+                match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, dy) => {
+                        self.adjust_zoom(-dy as f32 * 8.0 * 0.01, mouse_pos)
+                    }
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => {
+                        self.adjust_zoom(-pos.y as f32 * 0.01, mouse_pos)
+                    }
+                }
+            }
+
+            WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed,
+                ..
+            } if !mouse_in_viewport => return,
+            _ => {}
+        }
+
+        self.state.on_event(&self.context, &event);
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
+    fn render(&mut self, ctx: app::RenderContext) {
+        use egui::*;
+        use winit::dpi::PhysicalSize;
+        use winit::event::WindowEvent;
 
-    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
+        let app::RenderContext {
+            device,
+            queue,
+            window,
+            encoder,
+            attachment,
+            viewport,
+        } = ctx;
+
+        let parent_scale = window.scale_factor() as f32;
+
+        crate::workspace::preview::update_previews(
+            encoder,
+            &mut self.workspace,
+            device,
+            &mut self.renderpass,
+            parent_scale,
+        );
+
+        // We craft a fake resize event so that the code in egui_winit_platform
+        // remains unchanged, thinking it lives in a real window. The poor thing!
+        let fake_resize_event = WindowEvent::Resized(PhysicalSize::new(
+            (viewport.width() * self.zoom_level * parent_scale) as u32,
+            (viewport.height() * self.zoom_level * parent_scale) as u32,
+        ));
+
+        self.state.on_event(&self.context, &fake_resize_event);
+
+        let mut new_input = self.state.take_egui_input(window);
+        let ppi = self.zoom_level.recip();
+        new_input.pixels_per_point = Some(ppi);
+        {
+            let viewport = crate::app::panel::rect_scale(viewport, ppi.recip());
+            new_input.screen_rect = Some(viewport);
+        }
+        self.context.begin_frame(new_input);
+
+        self.workspace.draw(&self.context);
+
+        let FullOutput {
+            shapes,
+            needs_repaint: _,
+            textures_delta,
+            platform_output,
+        } = self.context.end_frame();
+
+        self.state
+            .handle_platform_output(window, &self.context, platform_output);
+
+        let size = window.inner_size();
+
+        let screen_descriptor = ScreenDescriptor {
+            width: size.width,
+            height: size.height,
+            scale: self.context.pixels_per_point(),
+        };
+
+        let paint_jobs = self.context.tessellate(shapes);
+
+        self.renderpass
+            .add_textures(device, queue, &textures_delta)
+            .unwrap();
+        self.renderpass.remove_textures(textures_delta).unwrap();
+        self.renderpass
+            .update_buffers(device, queue, &paint_jobs, &screen_descriptor);
+
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("egui main render pass"),
+            color_attachments: &[attachment],
+            depth_stencil_attachment: None,
+        });
+
+        rpass.push_debug_group("egui_pass");
+
+        self.renderpass
+            .execute(&mut rpass, &paint_jobs, &screen_descriptor, viewport)
+            .unwrap();
+
+        rpass.pop_debug_group();
+
+        //Ok(needs_repaint)
     }
 }
