@@ -33,7 +33,7 @@ impl Panel {
             renderpass: RenderPass::new(device, output_format, sample_count),
             context: {
                 let context = Context::default();
-                context.set_fonts(super::fonts_with_blender());
+                context.set_fonts(crate::global::fonts_with_blender());
                 context
             },
             mouse: MouseInput::default(),

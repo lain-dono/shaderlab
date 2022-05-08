@@ -1,5 +1,7 @@
+use crate::util::map_to_pixel;
 use egui::{Color32, CursorIcon, Rect, Rounding, Sense, Ui};
 
+#[derive(Clone)]
 pub struct Style {
     pub separator_size: f32,
     pub separator_extra: f32,
@@ -52,7 +54,9 @@ impl Default for Style {
 }
 
 impl Style {
-    pub fn hsplit(&self, ui: &mut Ui, fraction: &mut f32, rect: Rect) -> (Rect, Rect) {
+    pub fn hsplit(&self, ui: &mut Ui, fraction: &mut f32, rect: Rect) -> (Rect, Rect, Rect) {
+        let pixels_per_point = ui.ctx().pixels_per_point();
+
         let mut separator = rect;
 
         let midpoint = rect.min.x + rect.width() * *fraction;
@@ -73,16 +77,27 @@ impl Style {
         }
 
         let midpoint = rect.min.x + rect.width() * *fraction;
-        separator.min.x = midpoint - self.separator_size * 0.5;
-        separator.max.x = midpoint + self.separator_size * 0.5;
+        separator.min.x = map_to_pixel(
+            midpoint - self.separator_size * 0.5,
+            pixels_per_point,
+            f32::round,
+        );
+        separator.max.x = map_to_pixel(
+            midpoint + self.separator_size * 0.5,
+            pixels_per_point,
+            f32::round,
+        );
 
         (
             rect.intersect(Rect::everything_right_of(separator.max.x)),
+            separator,
             rect.intersect(Rect::everything_left_of(separator.min.x)),
         )
     }
 
-    pub fn vsplit(&self, ui: &mut Ui, fraction: &mut f32, rect: Rect) -> (Rect, Rect) {
+    pub fn vsplit(&self, ui: &mut Ui, fraction: &mut f32, rect: Rect) -> (Rect, Rect, Rect) {
+        let pixels_per_point = ui.ctx().pixels_per_point();
+
         let mut separator = rect;
 
         let midpoint = rect.min.y + rect.height() * *fraction;
@@ -104,11 +119,20 @@ impl Style {
         }
 
         let midpoint = rect.min.y + rect.height() * *fraction;
-        separator.min.y = midpoint - self.separator_size * 0.5;
-        separator.max.y = midpoint + self.separator_size * 0.5;
+        separator.min.y = map_to_pixel(
+            midpoint - self.separator_size * 0.5,
+            pixels_per_point,
+            f32::round,
+        );
+        separator.max.y = map_to_pixel(
+            midpoint + self.separator_size * 0.5,
+            pixels_per_point,
+            f32::round,
+        );
 
         (
             rect.intersect(Rect::everything_above(separator.min.y)),
+            separator,
             rect.intersect(Rect::everything_below(separator.max.y)),
         )
     }

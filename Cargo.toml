@@ -9,12 +9,12 @@ slotmap = "1"
 arrayvec = "0.7"
 
 async-executor = "1.4"
-#egui_wgpu_backend = "0.17"
 pollster = "0.2"
 egui = { version = "0.17", features = ["convert_bytemuck"] }
 egui-winit = "0.17"
 wgpu = "0.12"
 winit = "0.26.1"
+webbrowser = "0.7.0"
 
 bytemuck = "1.9"
 
@@ -28,6 +28,10 @@ ahash = "0.7.6"
 sublime_fuzzy = "0.7.0"
 
 bevy = "0.7"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+arboard = "2.0.1"
+thread_local = "1.1.0"
 
 [profile.dev]
 opt-level = 1

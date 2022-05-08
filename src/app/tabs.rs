@@ -1,4 +1,6 @@
-use crate::app::{Global, Style};
+use crate::style::Style;
+use bevy::ecs::schedule::Schedule;
+use bevy::prelude::World;
 use egui::{Rect, Ui};
 
 pub struct RenderContext<'a> {
@@ -10,23 +12,15 @@ pub struct RenderContext<'a> {
     pub viewport: Rect,
 }
 
-pub trait TabInner {
-    fn ui(&mut self, ui: &mut Ui, style: &Style, global: &mut Global);
-
-    fn render(&mut self, _ctx: RenderContext) {}
-
-    fn on_event(
-        &mut self,
-        _event: &winit::event::WindowEvent<'static>,
-        _viewport: Rect,
-        _parent_scale: f32,
-    ) {
-    }
+pub trait TabInner: Send + Sync + downcast_rs::Downcast {
+    fn ui(&mut self, _ui: &mut Ui, _style: &Style, _world: &mut World) {}
 }
+downcast_rs::impl_downcast!(TabInner);
 
 pub struct Tab {
     pub icon: char,
     pub title: String,
+    pub schedule: Schedule,
     pub inner: Box<dyn TabInner>,
 }
 
@@ -37,10 +31,16 @@ impl ToString for Tab {
 }
 
 impl Tab {
-    pub fn new(icon: char, title: impl Into<String>, inner: impl TabInner + 'static) -> Self {
+    pub fn new(
+        icon: char,
+        title: impl Into<String>,
+        inner: impl TabInner + 'static,
+        schedule: Schedule,
+    ) -> Self {
         Self {
             icon,
             title: title.into(),
+            schedule,
             inner: Box::new(inner),
         }
     }
@@ -100,17 +100,26 @@ impl TreeNode {
         matches!(self, Self::Leaf { .. })
     }
 
-    pub fn replace(&mut self, value: Self) -> Self {
-        std::mem::replace(self, value)
+    pub fn split(&mut self, split: Split, fraction: f32) -> Self {
+        let rect = Rect::NOTHING;
+        let src = match split {
+            Split::Left | Split::Right => TreeNode::Horizontal { fraction, rect },
+            Split::Above | Split::Below => TreeNode::Vertical { fraction, rect },
+        };
+        std::mem::replace(self, src)
     }
 
-    pub fn take(&mut self) -> Self {
-        std::mem::replace(self, Self::None)
-    }
-
-    pub fn tabs_mut(&mut self) -> Option<&mut Vec<Tab>> {
+    #[track_caller]
+    pub fn append_tab(&mut self, tab: Tab) {
         match self {
-            TreeNode::Leaf { tabs, .. } => Some(tabs),
+            TreeNode::Leaf { tabs, .. } => tabs.push(tab),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn remove_tab(&mut self, index: usize) -> Option<Tab> {
+        match self {
+            TreeNode::Leaf { tabs, .. } => Some(tabs.remove(index)),
             _ => None,
         }
     }
@@ -174,6 +183,7 @@ impl NodeIndex {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Split {
     Left,
     Right,
@@ -181,11 +191,11 @@ pub enum Split {
     Below,
 }
 
-pub struct Tree {
+pub struct SplitTree {
     tree: Vec<TreeNode>,
 }
 
-impl std::ops::Index<NodeIndex> for Tree {
+impl std::ops::Index<NodeIndex> for SplitTree {
     type Output = TreeNode;
 
     #[inline(always)]
@@ -194,16 +204,34 @@ impl std::ops::Index<NodeIndex> for Tree {
     }
 }
 
-impl std::ops::IndexMut<NodeIndex> for Tree {
+impl std::ops::IndexMut<NodeIndex> for SplitTree {
     #[inline(always)]
     fn index_mut(&mut self, index: NodeIndex) -> &mut Self::Output {
         &mut self.tree[index.0]
     }
 }
 
-impl Tree {
+impl SplitTree {
     pub fn new(root: TreeNode) -> Self {
         Self { tree: vec![root] }
+    }
+
+    pub fn find_active<T: TabInner>(&mut self) -> Option<(Rect, &mut T)> {
+        self.tree.iter_mut().find_map(|node| {
+            if let TreeNode::Leaf {
+                tabs,
+                active,
+                viewport,
+                ..
+            } = node
+            {
+                tabs.get_mut(*active)
+                    .and_then(|tab| tab.inner.downcast_mut::<T>())
+                    .map(|tab| (*viewport, tab))
+            } else {
+                None
+            }
+        })
     }
 
     #[inline]
@@ -229,14 +257,8 @@ impl Tree {
     }
 
     pub fn split(&mut self, parent: NodeIndex, new: TreeNode, split: Split) -> [NodeIndex; 2] {
-        let fraction = 0.5;
-        let rect = Rect::NOTHING;
-        let old = self[parent].replace(match split {
-            Split::Left | Split::Right => TreeNode::Horizontal { fraction, rect },
-            Split::Above | Split::Below => TreeNode::Vertical { fraction, rect },
-        });
-
-        assert!(matches!(old, TreeNode::Leaf { .. }));
+        let old = self[parent].split(split, 0.5);
+        assert!(old.is_leaf());
         self.fix_len_parent(parent);
 
         let index = match split {
@@ -277,7 +299,7 @@ impl Tree {
                     if src >= self.tree.len() {
                         break 'left_end;
                     }
-                    self.tree[dst] = self.tree[src].take();
+                    self.tree[dst] = std::mem::replace(&mut self.tree[src], TreeNode::None);
                 }
                 level += 1;
             }
@@ -289,7 +311,7 @@ impl Tree {
                     if src >= self.tree.len() {
                         break 'right_end;
                     }
-                    self.tree[dst] = self.tree[src].take();
+                    self.tree[dst] = std::mem::replace(&mut self.tree[src], TreeNode::None);
                 }
                 level += 1;
             }

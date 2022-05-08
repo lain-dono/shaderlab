@@ -1,465 +1,429 @@
-use crate::app::{RenderPass, ScreenDescriptor};
-use crate::global::Global;
-use crate::hierarchy::Hierarchy;
-use crate::inspector::Inspector;
-use std::future::Future;
-use std::iter;
-use std::time::{Duration, Instant};
-use winit::{
-    dpi::PhysicalSize,
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    platform::run_return::EventLoopExtRunReturn,
-    window::{Window, WindowBuilder},
+#![allow(clippy::forget_non_drop)]
+
+use bevy::core_pipeline::{
+    draw_3d_graph, node, AlphaMask3d, Opaque3d, RenderTargetClearColors, Transparent3d,
 };
+use bevy::log::LogPlugin;
+use bevy::prelude::*;
+use bevy::render::{
+    camera::{ActiveCamera, Camera, CameraTypePlugin, RenderTarget},
+    render_graph::{
+        Node, NodeRunError, RenderGraph, RenderGraphContext, RenderGraphError, SlotValue,
+    },
+    render_phase::RenderPhase,
+    render_resource::{
+        Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+    },
+    {renderer::RenderContext, view::RenderLayers, RenderApp, RenderStage},
+};
+use bevy::window::{PresentMode, WindowId};
+use bevy::winit::{UpdateMode, WinitSettings};
 
-mod global;
-mod hierarchy;
-mod inspector;
+pub mod app;
+pub mod blender;
+pub mod global;
+pub mod panel;
+pub mod shell;
+pub mod style;
+pub mod util;
 
-mod app;
-mod blender;
-mod builder;
-mod framebuffer;
-mod graph;
-mod nodes;
-pub mod workspace;
+#[derive(Component, Default)]
+pub struct FirstPassCamera;
 
-const INITIAL_WIDTH: u32 = 1920;
-const INITIAL_HEIGHT: u32 = 1080;
-
-use crate::framebuffer::Framebuffer;
-use crate::workspace::Workspace;
-
-pub struct Spawner<'a> {
-    executor: async_executor::LocalExecutor<'a>,
-}
-
-impl<'a> Spawner<'a> {
-    fn new() -> Self {
-        Self {
-            executor: async_executor::LocalExecutor::new(),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn spawn_local(&self, future: impl Future<Output = ()> + 'a) {
-        self.executor.spawn(future).detach();
-    }
-
-    fn run_until_stalled(&self) {
-        while self.executor.try_tick() {}
-    }
-}
-
-fn enable_tracing() {
-    use tracing_subscriber::{fmt, EnvFilter};
-
-    let format = fmt::format()
-        .without_time()
-        .with_target(true)
-        .with_source_location(true)
-        .compact();
-
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .event_format(format)
-        .init();
-}
+// The name of the final node of the first pass.
+pub const FIRST_PASS_DRIVER: &str = "first_pass_driver";
 
 fn main() {
-    enable_tracing();
+    crate::util::enable_tracing();
 
-    let mut event_loop: EventLoop<()> = EventLoop::with_user_event();
-    let window = WindowBuilder::new()
-        .with_decorations(true)
-        .with_resizable(true)
-        .with_transparent(false)
-        .with_title("Shaderlab")
-        .with_inner_size(PhysicalSize {
-            width: INITIAL_WIDTH,
-            height: INITIAL_HEIGHT,
+    let mut app = App::new();
+    app.insert_resource(ClearColor(Color::CRIMSON))
+        .insert_resource(Msaa { samples: 4 })
+        .insert_resource(WindowDescriptor {
+            title: String::from("ShaderLab"),
+            ..default()
         })
-        .build(&event_loop)
-        .unwrap();
+        .add_plugins_with(DefaultPlugins, |group| group.disable::<LogPlugin>())
+        .register_type::<crate::global::Icon>()
+        .add_plugin(shell::EguiPlugin)
+        .add_plugin(CameraTypePlugin::<FirstPassCamera>::default())
+        // Optimal power saving and present mode settings for desktop apps.
+        .insert_resource(WinitSettings {
+            return_from_run: true,
+            //focused_mode: UpdateMode::Continuous,
+            focused_mode: UpdateMode::Reactive {
+                max_wait: std::time::Duration::from_secs_f64(1.0 / 60.0),
+            },
+            unfocused_mode: UpdateMode::ReactiveLowPower {
+                max_wait: std::time::Duration::from_secs(60),
+            },
+        })
+        .insert_resource(WindowDescriptor {
+            present_mode: PresentMode::Mailbox,
+            ..default()
+        })
+        .add_startup_system(setup)
+        .add_startup_system(crate::global::setup)
+        .add_system(crate::app::ui_root)
+        .add_system(scene_force_set_changed)
+        .insert_resource(crate::panel::scene::SceneRenderTarget(None))
+        .add_system(crate::panel::scene::update_scene_render_target.after(crate::app::ui_root))
+        .add_system(cube_rotator_system)
+        .add_system(rotator_system)
+        .add_system_to_stage(CoreStage::First, extract_editable_scene.exclusive_system());
 
-    let instance = wgpu::Instance::new(wgpu::Backends::PRIMARY);
-    let surface = unsafe { instance.create_surface(&window) };
+    init_graph(app.sub_app_mut(RenderApp)).unwrap();
 
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: Some(&surface),
-        force_fallback_adapter: false,
-    }))
-    .unwrap();
+    app.run();
+}
 
-    let desc = wgpu::DeviceDescriptor {
-        features: wgpu::Features::default(),
-        limits: wgpu::Limits::default(),
-        label: None,
-    };
-    let (device, queue) = pollster::block_on(adapter.request_device(&desc, None)).unwrap();
+fn extract_editable_scene(world: &mut World) {
+    use crate::panel::scene::SceneRenderTarget;
+    use bevy::reflect::TypeRegistryArc;
+    use bevy::render::camera::Camera3d;
+    use bevy::scene::SceneSpawnError;
+    //use bevy::ecs::reflect::ReflectMapEntities;
 
-    let surface_format = surface.get_preferred_format(&adapter).unwrap();
-    let sample_count = 4;
+    let transform = {
+        let transform = world
+            .get_resource::<ActiveCamera<Camera3d>>()
+            .and_then(|camera| camera.get())
+            .and_then(|camera| world.get::<Transform>(camera));
 
-    let mut fb = {
-        let size = window.inner_size();
-
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Mailbox,
-        };
-
-        Framebuffer::new(&device, surface, sample_count, config)
-    };
-
-    let mut app = {
-        use crate::app::*;
-        use egui::{Color32, Rect, Ui};
-
-        struct SampleTab;
-
-        impl TabInner for SampleTab {
-            fn ui(&mut self, ui: &mut Ui, style: &Style, global: &mut Global) {
-                let rect = ui.available_rect_before_wrap();
-
-                let sep = rect.min.y + 25.0;
-
-                let body_top = rect.intersect(Rect::everything_above(sep));
-                ui.painter().rect_filled(body_top, 0.0, style.tab_base);
-
-                let body = rect.intersect(Rect::everything_below(sep));
-                ui.painter()
-                    .rect_filled(body, 0.0, Color32::from_gray(0x28));
-            }
+        match transform {
+            Some(transform) => *transform,
+            None => return,
         }
-
-        struct NodeTodo;
-
-        impl TabInner for NodeTodo {
-            fn ui(&mut self, ui: &mut Ui, style: &Style, global: &mut Global) {
-                let rect = ui.available_rect_before_wrap();
-                let bg = Color32::from_gray(0x28);
-                ui.painter().rect_filled(rect, 0.0, bg);
-                crate::nodes::nodes(ui);
-            }
-        }
-
-        let node_tree = NodeTree::new(&device, &window, surface_format, sample_count);
-        let node_tree = Tab::new(crate::blender::NODETREE, "Node Tree", node_tree);
-        let scene = Tab::new(crate::blender::VIEW3D, "Scene", SampleTab);
-        let material = Tab::new(crate::blender::MATERIAL, "Material", NodeTodo);
-
-        let outliner = Tab::new(crate::blender::OUTLINER, "Hierarchy", Hierarchy::default());
-        let properties = Tab::new(
-            crate::blender::PROPERTIES,
-            "Inspector",
-            Inspector::default(),
-        );
-
-        let root = TreeNode::leaf_with(vec![node_tree, scene, material]);
-        let mut app = crate::app::App::new(&device, &window, surface_format, sample_count, root);
-
-        let one = TreeNode::leaf_with(vec![properties]);
-        let two = TreeNode::leaf_with(vec![outliner]);
-        let [_, _b] = app.tree.split(NodeIndex::root(), one, Split::Right);
-        let [_, _b] = app.tree.split(_b, two, Split::Above);
-
-        app
     };
 
-    let mut last_update_inst = Instant::now();
-    let spawner = Spawner::new();
+    world.clear_entities();
 
-    event_loop.run_return(move |event, _, control_flow| {
-        match event {
-            Event::NewEvents(_) => (),
-            Event::WindowEvent { event, .. } => match event {
-                // Resize with 0 width and height is used by winit to signal a minimize event on Windows.
-                // See: https://github.com/rust-windowing/winit/issues/208
-                // This solves an issue where the app would panic when minimizing on Windows.
-                WindowEvent::Resized(size) => {
-                    if size.width > 0 && size.height > 0 {
-                        fb.set_size(&device, size.width, size.height);
+    let type_registry = world.resource::<TypeRegistryArc>().clone();
+    let type_registry = type_registry.read();
+
+    world.resource_scope(|world, scene: Mut<Scene>| {
+        for archetype in scene.world.archetypes().iter() {
+            for scene_entity in archetype.entities() {
+                let entity = world.spawn().id();
+                for component_id in archetype.components() {
+                    let component_info = scene
+                        .world
+                        .components()
+                        .get_info(component_id)
+                        .expect("component_ids in archetypes should have ComponentInfo");
+
+                    let reflect_component = type_registry
+                        .get(component_info.type_id().unwrap())
+                        .ok_or_else(|| SceneSpawnError::UnregisteredType {
+                            type_name: component_info.name().to_string(),
+                        })
+                        .and_then(|registration| {
+                            registration.data::<ReflectComponent>().ok_or_else(|| {
+                                SceneSpawnError::UnregisteredComponent {
+                                    type_name: component_info.name().to_string(),
+                                }
+                            })
+                        });
+
+                    match reflect_component {
+                        Ok(reflect_component) => reflect_component.copy_component(
+                            &scene.world,
+                            world,
+                            *scene_entity,
+                            entity,
+                        ),
+                        Err(err) => bevy::log::error!("respawn: {:?}", err),
                     }
                 }
-                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                // Pass the winit events to the platform integration.
-                event => app.on_event(event),
-            },
-            Event::DeviceEvent { .. } => (),
-            Event::UserEvent(_) => window.request_redraw(),
-            Event::Suspended | Event::Resumed | Event::MainEventsCleared => (),
-            Event::RedrawRequested(..) => {
-                let (target, frame) = match fb.next() {
-                    Ok(frame) => frame,
-                    // This error occurs when the app is minimized on Windows.
-                    // Silently return here to prevent spamming the console with:
-                    // "The underlying surface has changed, and therefore the swap chain must be updated"
-                    Err(wgpu::SurfaceError::Outdated) => return,
-                    Err(err) => return eprintln!("Dropped frame with error: {}", err),
-                };
+            }
+        }
 
-                let target = target.as_ref();
-
-                let mut encoder = device.create_command_encoder(&Default::default());
-
-                let repaint = app
-                    .run(&window, &device, &queue, &mut encoder, target)
+        /*
+        for registration in type_registry.iter() {
+            if let Some(map_entities_reflect) = registration.data::<ReflectMapEntities>() {
+                map_entities_reflect
+                    .map_entities(world, &instance_info.entity_map)
                     .unwrap();
-
-                queue.submit(iter::once(encoder.finish()));
-                frame.present();
-
-                // Suppport reactive on windows only, but not on linux.
-                *control_flow = if repaint {
-                    ControlFlow::Poll
-                } else {
-                    ControlFlow::Wait
-                };
             }
-
-            Event::RedrawEventsCleared => {
-                let target_frametime = Duration::from_secs_f64(1.0 / 60.0);
-                let now = Instant::now();
-                let time_since_last_frame = now - last_update_inst;
-                if time_since_last_frame >= target_frametime {
-                    window.request_redraw();
-                    last_update_inst = now;
-                } else {
-                    *control_flow =
-                        ControlFlow::WaitUntil(now + target_frametime - time_since_last_frame)
-                };
-
-                spawner.run_until_stalled();
-            }
-
-            Event::LoopDestroyed => (),
         }
+        */
+
+        /*
+        self.spawned_instances.insert(instance_id, instance_info);
+        let spawned = self
+            .spawned_scenes
+            .entry(scene_handle)
+            .or_insert_with(Vec::new);
+        spawned.push(instance_id);
+        Ok(instance_id)
+        */
     });
-}
 
-pub fn fuck_ref<'a, T>(ptr: &T) -> &'a T {
-    unsafe { &*(ptr as *const T) }
-}
+    if let Some(handle) = world
+        .get_resource::<SceneRenderTarget>()
+        .and_then(|s| s.0.as_ref())
+        .cloned()
+    {
+        let target = RenderTarget::Image(handle);
 
-pub fn fuck_mut<'a, T>(ptr: &mut T) -> &'a mut T {
-    unsafe { &mut *(ptr as *mut T) }
-}
+        world
+            .resource_mut::<RenderTargetClearColors>()
+            .insert(target.clone(), Color::CRIMSON);
 
-// TODO: Stable since Rust version 1.62.0
-pub fn total_cmp(lhs: &f32, rhs: &f32) -> std::cmp::Ordering {
-    let mut lhs = lhs.to_bits() as i32;
-    let mut rhs = rhs.to_bits() as i32;
-    lhs ^= (((lhs >> 31) as u32) >> 1) as i32;
-    rhs ^= (((rhs >> 31) as u32) >> 1) as i32;
-    lhs.cmp(&rhs)
-}
-
-pub struct NodeTree {
-    pub workspace: Workspace,
-    pub context: egui::Context,
-    pub state: egui_winit::State,
-    pub renderpass: RenderPass,
-
-    pub zoom_level: f32,
-
-    pub raw_mouse_position: Option<egui::Pos2>,
-}
-
-impl NodeTree {
-    pub fn new(
-        device: &wgpu::Device,
-        window: &Window,
-        output_format: wgpu::TextureFormat,
-        sample_count: u32,
-    ) -> Self {
-        let limits = device.limits();
-        let max_texture_side = limits.max_texture_dimension_2d as usize;
-
-        Self {
-            workspace: Workspace::default(),
-            state: egui_winit::State::new(max_texture_side, window),
-            renderpass: RenderPass::new(device, output_format, sample_count),
-            context: {
-                let context = egui::Context::default();
-                context.set_fonts(app::fonts_with_blender());
-                context
+        world.spawn().insert_bundle(PerspectiveCameraBundle {
+            camera: Camera {
+                target,
+                ..default()
             },
-
-            zoom_level: 1.0 / window.scale_factor() as f32,
-            raw_mouse_position: None,
-        }
+            transform,
+            ..default()
+        });
     }
+}
 
-    fn adjust_zoom(&mut self, zoom_delta: f32, point: egui::Vec2) {
-        if !self.context.wants_pointer_input() {
-            let zoom_clamped = (self.zoom_level + zoom_delta).clamp(0.25, 2.0);
-            let zoom_delta = zoom_clamped - self.zoom_level;
-            self.zoom_level += zoom_delta;
-            self.workspace.pan_offset += point * zoom_delta;
+fn scene_force_set_changed(handle: Option<ResMut<Handle<DynamicScene>>>) {
+    if let Some(mut handle) = handle {
+        handle.set_changed();
+    }
+    /*
+    if let Some(handle) = world.get_resource::<Handle<DynamicScene>>().cloned() {
+        world.resource_scope(|world, mut spawner: Mut<SceneSpawner>| {
+            spawner.update_spawned_scenes(world, &[handle]).unwrap();
+        });
+    }
+    */
+}
+
+fn init_graph(render_app: &mut App) -> Result<(), RenderGraphError> {
+    // This will add 3D render phases for the new camera.
+    render_app.add_system_to_stage(RenderStage::Extract, extract_first_pass_camera_phases);
+
+    let driver = FirstPassCameraDriver::new(&mut render_app.world);
+    let mut graph = render_app.world.resource_mut::<RenderGraph>();
+
+    // add egui nodes
+    shell::setup_pipeline(&mut graph, WindowId::primary(), "ui_root");
+
+    // Add a node for the first pass.
+    graph.add_node(FIRST_PASS_DRIVER, driver);
+
+    // The first pass's dependencies include those of the main pass.
+    graph.add_node_edge(node::MAIN_PASS_DEPENDENCIES, FIRST_PASS_DRIVER)?;
+
+    // Insert the first pass node: CLEAR_PASS_DRIVER -> FIRST_PASS_DRIVER -> MAIN_PASS_DRIVER
+    graph.add_node_edge(node::CLEAR_PASS_DRIVER, FIRST_PASS_DRIVER)?;
+    graph.add_node_edge(FIRST_PASS_DRIVER, node::MAIN_PASS_DRIVER)?;
+
+    Ok(())
+}
+
+// Add 3D render phases for FIRST_PASS_CAMERA.
+fn extract_first_pass_camera_phases(
+    mut commands: Commands,
+    active: Res<ActiveCamera<FirstPassCamera>>,
+) {
+    if let Some(entity) = active.get() {
+        commands.get_or_spawn(entity).insert_bundle((
+            RenderPhase::<Opaque3d>::default(),
+            RenderPhase::<AlphaMask3d>::default(),
+            RenderPhase::<Transparent3d>::default(),
+        ));
+    }
+}
+
+// A node for the first pass camera that runs draw_3d_graph with this camera.
+struct FirstPassCameraDriver {
+    query: QueryState<Entity, With<FirstPassCamera>>,
+}
+
+impl FirstPassCameraDriver {
+    pub fn new(render_world: &mut World) -> Self {
+        Self {
+            query: QueryState::new(render_world),
         }
     }
 }
 
-impl app::TabInner for NodeTree {
-    fn ui(&mut self, ui: &mut egui::Ui, _style: &app::Style, global: &mut Global) {
-        let rect = ui.available_rect_before_wrap();
-        let bg = egui::Color32::from_gray(0x20);
-        ui.painter().rect_filled(rect, 0.0, bg);
+impl Node for FirstPassCameraDriver {
+    fn update(&mut self, world: &mut World) {
+        self.query.update_archetypes(world);
     }
 
-    fn on_event(
-        &mut self,
-        event: &winit::event::WindowEvent<'static>,
-        viewport: egui::Rect,
-        parent_scale: f32,
-    ) {
-        use crate::app::panel::{rect_scale, viewport_relative_position};
-
-        let mut event = event.clone();
-
-        // Copy event so we can modify it locally
-        let mouse_in_viewport = self
-            .raw_mouse_position
-            .map(|pos| rect_scale(viewport, parent_scale).contains(pos))
-            .unwrap_or(false);
-
-        #[allow(clippy::single_match)]
-        match event {
-            // Filter out scaling / resize events
-            winit::event::WindowEvent::Resized(_)
-            | winit::event::WindowEvent::ScaleFactorChanged { .. } => return,
-            // Hijack mouse events so they are relative to the viewport and account for zoom level.
-            winit::event::WindowEvent::CursorMoved {
-                ref mut position, ..
-            } => {
-                self.raw_mouse_position =
-                    Some(egui::Pos2::new(position.x as f32, position.y as f32));
-                /*
-                *position = viewport_relative_position_winit(
-                    *position,
-                    parent_scale,
-                    viewport,
-                    self.zoom_level,
-                );
-                    */
-            }
-            winit::event::WindowEvent::MouseWheel { delta, .. } if mouse_in_viewport => {
-                let mouse_pos = if let Some(raw_pos) = self.raw_mouse_position {
-                    viewport_relative_position(raw_pos, parent_scale, viewport, 1.0).to_vec2()
-                } else {
-                    egui::Vec2::ZERO
-                };
-                match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, dy) => {
-                        self.adjust_zoom(-dy as f32 * 8.0 * 0.01, mouse_pos)
-                    }
-                    winit::event::MouseScrollDelta::PixelDelta(pos) => {
-                        self.adjust_zoom(-pos.y as f32 * 0.01, mouse_pos)
-                    }
-                }
-            }
-
-            WindowEvent::MouseInput {
-                state: winit::event::ElementState::Pressed,
-                ..
-            } if !mouse_in_viewport => return,
-            _ => {}
+    fn run(
+        &self,
+        graph: &mut RenderGraphContext,
+        _render_context: &mut RenderContext,
+        world: &World,
+    ) -> Result<(), NodeRunError> {
+        for camera in self.query.iter_manual(world) {
+            graph.run_sub_graph(draw_3d_graph::NAME, vec![SlotValue::Entity(camera)])?;
         }
-
-        self.state.on_event(&self.context, &event);
+        Ok(())
     }
+}
 
-    fn render(&mut self, ctx: app::RenderContext) {
-        use egui::*;
-        use winit::dpi::PhysicalSize;
-        use winit::event::WindowEvent;
+// Marks the first pass cube (rendered to a texture.)
+#[derive(Component)]
+struct FirstPassCube;
 
-        let app::RenderContext {
-            device,
-            queue,
-            window,
-            encoder,
-            attachment,
-            viewport,
-        } = ctx;
+// Marks the main pass cube, to which the texture is applied.
+#[derive(Component)]
+struct MainPassCube;
 
-        let parent_scale = window.scale_factor() as f32;
-
-        crate::workspace::preview::update_previews(
-            encoder,
-            &mut self.workspace,
-            device,
-            &mut self.renderpass,
-            parent_scale,
-        );
-
-        // We craft a fake resize event so that the code in egui_winit_platform
-        // remains unchanged, thinking it lives in a real window. The poor thing!
-        let fake_resize_event = WindowEvent::Resized(PhysicalSize::new(
-            (viewport.width() * self.zoom_level * parent_scale) as u32,
-            (viewport.height() * self.zoom_level * parent_scale) as u32,
-        ));
-
-        self.state.on_event(&self.context, &fake_resize_event);
-
-        let mut new_input = self.state.take_egui_input(window);
-        let ppi = self.zoom_level.recip();
-        new_input.pixels_per_point = Some(ppi);
-        {
-            let viewport = crate::app::panel::rect_scale(viewport, ppi.recip());
-            new_input.screen_rect = Some(viewport);
-        }
-        self.context.begin_frame(new_input);
-
-        self.workspace.draw(&self.context);
-
-        let FullOutput {
-            shapes,
-            needs_repaint: _,
-            textures_delta,
-            platform_output,
-        } = self.context.end_frame();
-
-        self.state
-            .handle_platform_output(window, &self.context, platform_output);
-
-        let size = window.inner_size();
-
-        let screen_descriptor = ScreenDescriptor {
-            width: size.width,
-            height: size.height,
-            scale: self.context.pixels_per_point(),
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut clear_colors: ResMut<RenderTargetClearColors>,
+) {
+    let (first_pass_layer, image_handle) = {
+        let size = Extent3d {
+            width: 32,
+            height: 32,
+            ..default()
         };
 
-        let paint_jobs = self.context.tessellate(shapes);
+        // This is the texture that will be rendered to.
+        let mut image = Image {
+            texture_descriptor: TextureDescriptor {
+                label: None,
+                size,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Bgra8UnormSrgb,
+                mip_level_count: 1,
+                sample_count: 1,
+                usage: TextureUsages::TEXTURE_BINDING
+                    | TextureUsages::COPY_DST
+                    | TextureUsages::RENDER_ATTACHMENT,
+            },
+            ..default()
+        };
 
-        self.renderpass
-            .add_textures(device, queue, &textures_delta)
-            .unwrap();
-        self.renderpass.remove_textures(textures_delta).unwrap();
-        self.renderpass
-            .update_buffers(device, queue, &paint_jobs, &screen_descriptor);
+        // fill image.data with zeroes
+        image.resize(size);
 
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("egui main render pass"),
-            color_attachments: &[attachment],
-            depth_stencil_attachment: None,
+        let image_handle = images.add(image);
+
+        // This specifies the layer used for the first pass, which will be attached to the first pass camera and cube.
+        let first_pass_layer = RenderLayers::layer(1);
+
+        // First pass camera
+        let render_target = RenderTarget::Image(image_handle.clone());
+        clear_colors.insert(render_target.clone(), Color::WHITE);
+
+        commands
+            .spawn_bundle(PerspectiveCameraBundle::<FirstPassCamera> {
+                camera: Camera {
+                    target: render_target,
+                    ..default()
+                },
+                transform: Transform::from_translation(Vec3::new(0.0, 0.0, 15.0))
+                    .looking_at(Vec3::default(), Vec3::Y),
+                ..PerspectiveCameraBundle::new()
+            })
+            .insert(first_pass_layer);
+
+        // NOTE: omitting the RenderLayers component for this camera may cause a validation error:
+        //
+        // thread 'main' panicked at 'wgpu error: Validation Error
+        //
+        //    Caused by:
+        //        In a RenderPass
+        //          note: encoder = `<CommandBuffer-(0, 1, Metal)>`
+        //        In a pass parameter
+        //          note: command buffer = `<CommandBuffer-(0, 1, Metal)>`
+        //        Attempted to use texture (5, 1, Metal) mips 0..1 layers 0..1 as a combination of COLOR_TARGET within a usage scope.
+        //
+        // This happens because the texture would be written and read in the same frame, which is not allowed.
+        // So either render layers must be used to avoid this, or the texture must be double buffered.
+
+        (first_pass_layer, image_handle)
+    };
+
+    let cube_handle = meshes.add(Mesh::from(shape::Cube { size: 4.0 }));
+    let cube_material_handle = materials.add(StandardMaterial {
+        base_color: Color::rgb(0.8, 0.7, 0.6),
+        reflectance: 0.02,
+        unlit: false,
+        ..default()
+    });
+
+    // The cube that will be rendered to the texture.
+    commands
+        .spawn_bundle(PbrBundle {
+            mesh: cube_handle,
+            material: cube_material_handle,
+            transform: Transform::from_translation(Vec3::new(0.0, 0.0, 1.0)),
+            ..default()
+        })
+        .insert(FirstPassCube)
+        .insert(first_pass_layer);
+
+    // Light
+    // NOTE: Currently lights are shared between passes - see https://github.com/bevyengine/bevy/issues/3462
+    commands.spawn_bundle(PointLightBundle {
+        transform: Transform::from_translation(Vec3::new(0.0, 0.0, 10.0)),
+        ..default()
+    });
+
+    let cube_size = 4.0;
+    let cube_handle = meshes.add(Mesh::from(shape::Box::new(cube_size, cube_size, cube_size)));
+
+    // This material has the texture that has been rendered.
+    let material_handle = materials.add(StandardMaterial {
+        base_color_texture: Some(image_handle),
+        reflectance: 0.02,
+        unlit: false,
+        ..default()
+    });
+
+    // Main pass cube, with material containing the rendered first pass texture.
+    commands
+        .spawn_bundle(PbrBundle {
+            mesh: cube_handle,
+            material: material_handle,
+            transform: Transform {
+                translation: Vec3::new(0.0, 0.0, 1.5),
+                rotation: Quat::from_rotation_x(-std::f32::consts::PI / 5.0),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(MainPassCube);
+
+    // The main pass camera.
+    {
+        let image_handle =
+            crate::panel::scene::SceneRenderTarget::insert(&mut commands, &mut images);
+
+        let render_target = RenderTarget::Image(image_handle);
+        clear_colors.insert(render_target.clone(), Color::CRIMSON);
+
+        commands.spawn_bundle(PerspectiveCameraBundle {
+            camera: Camera {
+                target: render_target,
+                ..default()
+            },
+            transform: Transform::from_translation(Vec3::new(0.0, 0.0, 15.0))
+                .looking_at(Vec3::default(), Vec3::Y),
+            ..default()
         });
+    }
+}
 
-        rpass.push_debug_group("egui_pass");
+/// Rotates the inner cube (first pass)
+fn rotator_system(time: Res<Time>, mut query: Query<&mut Transform, With<FirstPassCube>>) {
+    for mut transform in query.iter_mut() {
+        transform.rotation *= Quat::from_rotation_x(1.5 * time.delta_seconds());
+        transform.rotation *= Quat::from_rotation_z(1.3 * time.delta_seconds());
+    }
+}
 
-        self.renderpass
-            .execute(&mut rpass, &paint_jobs, &screen_descriptor, viewport)
-            .unwrap();
-
-        rpass.pop_debug_group();
-
-        //Ok(needs_repaint)
+/// Rotates the outer cube (main pass)
+fn cube_rotator_system(time: Res<Time>, mut query: Query<&mut Transform, With<MainPassCube>>) {
+    for mut transform in query.iter_mut() {
+        transform.rotation *= Quat::from_rotation_x(1.0 * time.delta_seconds());
+        transform.rotation *= Quat::from_rotation_y(0.7 * time.delta_seconds());
     }
 }
