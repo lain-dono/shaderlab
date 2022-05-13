@@ -1,4 +1,5 @@
 #![allow(clippy::forget_non_drop)]
+#![allow(clippy::too_many_arguments)]
 
 use bevy::core_pipeline::{
     draw_3d_graph, node, AlphaMask3d, Opaque3d, RenderTargetClearColors, Transparent3d,
@@ -19,13 +20,17 @@ use bevy::render::{
 use bevy::window::{PresentMode, WindowId};
 use bevy::winit::{UpdateMode, WinitSettings};
 
-pub mod app;
-pub mod blender;
-pub mod global;
-pub mod panel;
-pub mod shell;
-pub mod style;
-pub mod util;
+mod blender;
+
+mod asset;
+
+mod app;
+mod context;
+mod global;
+mod panel;
+mod shell;
+mod style;
+mod util;
 
 #[derive(Component, Default)]
 pub struct FirstPassCamera;
@@ -41,10 +46,13 @@ fn main() {
         .insert_resource(Msaa { samples: 4 })
         .insert_resource(WindowDescriptor {
             title: String::from("ShaderLab"),
+            //mode: WindowMode::Fullscreen,
+            present_mode: PresentMode::Mailbox,
             ..default()
         })
+        .init_resource::<crate::context::AnyMap>()
         .add_plugins_with(DefaultPlugins, |group| group.disable::<LogPlugin>())
-        .register_type::<crate::global::Icon>()
+        .add_plugin(crate::asset::EditroAssetPlugin)
         .add_plugin(shell::EguiPlugin)
         .add_plugin(CameraTypePlugin::<FirstPassCamera>::default())
         // Optimal power saving and present mode settings for desktop apps.
@@ -58,140 +66,33 @@ fn main() {
                 max_wait: std::time::Duration::from_secs(60),
             },
         })
-        .insert_resource(WindowDescriptor {
-            present_mode: PresentMode::Mailbox,
-            ..default()
-        })
         .add_startup_system(setup)
         .add_startup_system(crate::global::setup)
         .add_system(crate::app::ui_root)
-        .add_system(scene_force_set_changed)
+        .add_system_to_stage(CoreStage::First, scene_force_set_changed.exclusive_system())
         .insert_resource(crate::panel::scene::SceneRenderTarget(None))
         .add_system(crate::panel::scene::update_scene_render_target.after(crate::app::ui_root))
         .add_system(cube_rotator_system)
-        .add_system(rotator_system)
-        .add_system_to_stage(CoreStage::First, extract_editable_scene.exclusive_system());
+        .add_system(rotator_system);
 
     init_graph(app.sub_app_mut(RenderApp)).unwrap();
 
     app.run();
 }
 
-fn extract_editable_scene(world: &mut World) {
-    use crate::panel::scene::SceneRenderTarget;
-    use bevy::reflect::TypeRegistryArc;
-    use bevy::render::camera::Camera3d;
-    use bevy::scene::SceneSpawnError;
-    //use bevy::ecs::reflect::ReflectMapEntities;
-
-    let transform = {
-        let transform = world
-            .get_resource::<ActiveCamera<Camera3d>>()
-            .and_then(|camera| camera.get())
-            .and_then(|camera| world.get::<Transform>(camera));
-
-        match transform {
-            Some(transform) => *transform,
-            None => return,
-        }
-    };
-
-    world.clear_entities();
-
-    let type_registry = world.resource::<TypeRegistryArc>().clone();
-    let type_registry = type_registry.read();
-
-    world.resource_scope(|world, scene: Mut<Scene>| {
-        for archetype in scene.world.archetypes().iter() {
-            for scene_entity in archetype.entities() {
-                let entity = world.spawn().id();
-                for component_id in archetype.components() {
-                    let component_info = scene
-                        .world
-                        .components()
-                        .get_info(component_id)
-                        .expect("component_ids in archetypes should have ComponentInfo");
-
-                    let reflect_component = type_registry
-                        .get(component_info.type_id().unwrap())
-                        .ok_or_else(|| SceneSpawnError::UnregisteredType {
-                            type_name: component_info.name().to_string(),
-                        })
-                        .and_then(|registration| {
-                            registration.data::<ReflectComponent>().ok_or_else(|| {
-                                SceneSpawnError::UnregisteredComponent {
-                                    type_name: component_info.name().to_string(),
-                                }
-                            })
-                        });
-
-                    match reflect_component {
-                        Ok(reflect_component) => reflect_component.copy_component(
-                            &scene.world,
-                            world,
-                            *scene_entity,
-                            entity,
-                        ),
-                        Err(err) => bevy::log::error!("respawn: {:?}", err),
-                    }
-                }
-            }
-        }
-
-        /*
-        for registration in type_registry.iter() {
-            if let Some(map_entities_reflect) = registration.data::<ReflectMapEntities>() {
-                map_entities_reflect
-                    .map_entities(world, &instance_info.entity_map)
-                    .unwrap();
-            }
-        }
-        */
-
-        /*
-        self.spawned_instances.insert(instance_id, instance_info);
-        let spawned = self
-            .spawned_scenes
-            .entry(scene_handle)
-            .or_insert_with(Vec::new);
-        spawned.push(instance_id);
-        Ok(instance_id)
-        */
-    });
-
-    if let Some(handle) = world
-        .get_resource::<SceneRenderTarget>()
-        .and_then(|s| s.0.as_ref())
-        .cloned()
-    {
-        let target = RenderTarget::Image(handle);
-
-        world
-            .resource_mut::<RenderTargetClearColors>()
-            .insert(target.clone(), Color::CRIMSON);
-
-        world.spawn().insert_bundle(PerspectiveCameraBundle {
-            camera: Camera {
-                target,
-                ..default()
-            },
-            transform,
-            ..default()
-        });
-    }
-}
-
-fn scene_force_set_changed(handle: Option<ResMut<Handle<DynamicScene>>>) {
-    if let Some(mut handle) = handle {
-        handle.set_changed();
-    }
+fn scene_force_set_changed(world: &mut World) {
     /*
+    if let Some(mut handle) = handle {
+        dbg!();
+        //handle.set_changed();
+    }
+    */
+
     if let Some(handle) = world.get_resource::<Handle<DynamicScene>>().cloned() {
         world.resource_scope(|world, mut spawner: Mut<SceneSpawner>| {
             spawner.update_spawned_scenes(world, &[handle]).unwrap();
         });
     }
-    */
 }
 
 fn init_graph(render_app: &mut App) -> Result<(), RenderGraphError> {
@@ -276,7 +177,28 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut clear_colors: ResMut<RenderTargetClearColors>,
+
+    assets: Res<AssetServer>,
 ) {
+    if false {
+        //let mesh = assets.load("models/cube.gltf#Mesh0/Primitive0");
+        let mesh = assets.load("BoxTextured.glb#Mesh0/Primitive0");
+        let material = assets.load("BoxTextured.glb#Material0");
+        //let mesh = assets.load("Lantern.glb#Mesh0/Primitive0");
+
+        commands.spawn().insert_bundle(PbrBundle {
+            mesh,
+            material,
+            transform: Transform {
+                translation: Vec3::new(0.0, 0.0, 1.5),
+                rotation: Quat::from_rotation_x(-std::f32::consts::PI / 5.0),
+                //scale: Vec3::splat(3.0),
+                ..default()
+            },
+            ..default()
+        });
+    }
+
     let (first_pass_layer, image_handle) = {
         let size = Extent3d {
             width: 32,
@@ -341,24 +263,26 @@ fn setup(
         (first_pass_layer, image_handle)
     };
 
-    let cube_handle = meshes.add(Mesh::from(shape::Cube { size: 4.0 }));
-    let cube_material_handle = materials.add(StandardMaterial {
-        base_color: Color::rgb(0.8, 0.7, 0.6),
-        reflectance: 0.02,
-        unlit: false,
-        ..default()
-    });
-
-    // The cube that will be rendered to the texture.
-    commands
-        .spawn_bundle(PbrBundle {
-            mesh: cube_handle,
-            material: cube_material_handle,
-            transform: Transform::from_translation(Vec3::new(0.0, 0.0, 1.0)),
+    {
+        let mesh = meshes.add(Mesh::from(shape::Cube { size: 4.0 }));
+        let material = materials.add(StandardMaterial {
+            base_color: Color::rgb(0.8, 0.7, 0.6),
+            reflectance: 0.02,
+            unlit: false,
             ..default()
-        })
-        .insert(FirstPassCube)
-        .insert(first_pass_layer);
+        });
+
+        // The cube that will be rendered to the texture.
+        commands
+            .spawn_bundle(PbrBundle {
+                mesh,
+                material,
+                transform: Transform::from_translation(Vec3::new(0.0, 0.0, 1.0)),
+                ..default()
+            })
+            .insert(FirstPassCube)
+            .insert(first_pass_layer);
+    }
 
     // Light
     // NOTE: Currently lights are shared between passes - see https://github.com/bevyengine/bevy/issues/3462
@@ -367,42 +291,45 @@ fn setup(
         ..default()
     });
 
-    let cube_size = 4.0;
-    let cube_handle = meshes.add(Mesh::from(shape::Box::new(cube_size, cube_size, cube_size)));
+    if false {
+        let mesh = meshes.add(Mesh::from(shape::Cube { size: 4.0 }));
 
-    // This material has the texture that has been rendered.
-    let material_handle = materials.add(StandardMaterial {
-        base_color_texture: Some(image_handle),
-        reflectance: 0.02,
-        unlit: false,
-        ..default()
-    });
-
-    // Main pass cube, with material containing the rendered first pass texture.
-    commands
-        .spawn_bundle(PbrBundle {
-            mesh: cube_handle,
-            material: material_handle,
-            transform: Transform {
-                translation: Vec3::new(0.0, 0.0, 1.5),
-                rotation: Quat::from_rotation_x(-std::f32::consts::PI / 5.0),
-                ..default()
-            },
+        // This material has the texture that has been rendered.
+        let material = materials.add(StandardMaterial {
+            base_color_texture: Some(image_handle),
+            reflectance: 0.02,
+            unlit: false,
             ..default()
-        })
-        .insert(MainPassCube);
+        });
+
+        // Main pass cube, with material containing the rendered first pass texture.
+        commands
+            .spawn_bundle(PbrBundle {
+                mesh,
+                material,
+                transform: Transform {
+                    translation: Vec3::new(0.0, 0.0, 1.5),
+                    rotation: Quat::from_rotation_x(-std::f32::consts::PI / 5.0),
+                    ..default()
+                },
+                ..default()
+            })
+            .insert(MainPassCube);
+    }
 
     // The main pass camera.
     {
         let image_handle =
             crate::panel::scene::SceneRenderTarget::insert(&mut commands, &mut images);
 
-        let render_target = RenderTarget::Image(image_handle);
-        clear_colors.insert(render_target.clone(), Color::CRIMSON);
+        let target = RenderTarget::Image(image_handle);
+        //clear_colors.insert(target.clone(), Color::CRIMSON);
+        let gray = 0x2B as f32 / 255.0;
+        clear_colors.insert(target.clone(), Color::rgb(gray, gray, gray));
 
         commands.spawn_bundle(PerspectiveCameraBundle {
             camera: Camera {
-                target: render_target,
+                target,
                 ..default()
             },
             transform: Transform::from_translation(Vec3::new(0.0, 0.0, 15.0))

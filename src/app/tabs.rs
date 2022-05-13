@@ -1,6 +1,5 @@
+use crate::context::EditorContext;
 use crate::style::Style;
-use bevy::ecs::schedule::Schedule;
-use bevy::prelude::World;
 use egui::{Rect, Ui};
 
 pub struct RenderContext<'a> {
@@ -13,14 +12,13 @@ pub struct RenderContext<'a> {
 }
 
 pub trait TabInner: Send + Sync + downcast_rs::Downcast {
-    fn ui(&mut self, _ui: &mut Ui, _style: &Style, _world: &mut World) {}
+    fn ui(&mut self, _ui: &mut Ui, _style: &Style, _ctx: EditorContext);
 }
 downcast_rs::impl_downcast!(TabInner);
 
 pub struct Tab {
     pub icon: char,
     pub title: String,
-    pub schedule: Schedule,
     pub inner: Box<dyn TabInner>,
 }
 
@@ -31,16 +29,10 @@ impl ToString for Tab {
 }
 
 impl Tab {
-    pub fn new(
-        icon: char,
-        title: impl Into<String>,
-        inner: impl TabInner + 'static,
-        schedule: Schedule,
-    ) -> Self {
+    pub fn new(icon: char, title: impl Into<String>, inner: impl TabInner + 'static) -> Self {
         Self {
             icon,
             title: title.into(),
-            schedule,
             inner: Box::new(inner),
         }
     }
@@ -256,7 +248,16 @@ impl SplitTree {
         self.tree.resize_with(new_len + 1, || TreeNode::None);
     }
 
-    pub fn split(&mut self, parent: NodeIndex, new: TreeNode, split: Split) -> [NodeIndex; 2] {
+    pub fn split_tabs(
+        &mut self,
+        parent: NodeIndex,
+        split: Split,
+        tabs: Vec<Tab>,
+    ) -> [NodeIndex; 2] {
+        self.split(parent, split, TreeNode::leaf_with(tabs))
+    }
+
+    pub fn split(&mut self, parent: NodeIndex, split: Split, new: TreeNode) -> [NodeIndex; 2] {
         let old = self[parent].split(split, 0.5);
         assert!(old.is_leaf());
         self.fix_len_parent(parent);

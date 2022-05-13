@@ -1,12 +1,16 @@
 //! Utility structures and functions.
 
+#![allow(dead_code)]
+
+pub mod reflect;
+
 pub fn enable_tracing() {
     use tracing_subscriber::{fmt, EnvFilter};
 
     let format = fmt::format()
         .without_time()
         .with_target(false)
-        .with_source_location(true)
+        .with_source_location(false)
         .compact();
 
     tracing_subscriber::fmt()
@@ -15,12 +19,16 @@ pub fn enable_tracing() {
         .init();
 }
 
-pub fn fuck_ref<'a, T>(ptr: &T) -> &'a T {
-    unsafe { &*(ptr as *const T) }
+/// # Safety
+/// N/A
+pub unsafe fn fuck_ref<'a, T: ?Sized>(ptr: &T) -> &'a T {
+    &*(ptr as *const T)
 }
 
-pub fn fuck_mut<'a, T>(ptr: &mut T) -> &'a mut T {
-    unsafe { &mut *(ptr as *mut T) }
+/// # Safety
+/// N/A
+pub unsafe fn fuck_mut<'a, T: ?Sized>(ptr: &mut T) -> &'a mut T {
+    &mut *(ptr as *mut T)
 }
 
 // TODO: Stable since Rust version 1.62.0

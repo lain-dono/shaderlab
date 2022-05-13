@@ -1,5 +1,8 @@
+use crate::asset::ReflectScene;
+use crate::context::{AnyMap, EditorContext};
 use crate::style::Style;
 use bevy::prelude::*;
+use bevy::reflect::TypeRegistry;
 use bevy::window::WindowId;
 use egui::Rect;
 
@@ -23,9 +26,9 @@ impl<'a> egui::Widget for TabWidget<'a> {
         let font_id = egui::FontId::proportional(14.0);
         let galley = ui
             .painter()
-            .layout_no_wrap(self.label, font_id, self.style.tab_text);
+            .layout_no_wrap(self.label, font_id, self.style.input_text);
 
-        let offset = egui::vec2(8.0, 0.0);
+        let offset = egui::vec2(10.0, 0.0);
         let text_size = galley.size();
 
         let mut desired_size = text_size + offset * 2.0;
@@ -44,7 +47,7 @@ impl<'a> egui::Widget for TabWidget<'a> {
 
             tab.min.x += px;
             tab.max.x -= px;
-            ui.painter().rect_filled(tab, rounding, self.style.tab_base);
+            ui.painter().rect_filled(tab, rounding, self.style.panel);
         }
 
         let pos = egui::Align2::LEFT_TOP
@@ -101,206 +104,20 @@ impl HoverData {
     }
 }
 
-/*
-pub struct App {
-    pub ctx: egui::Context,
-    pub state: egui_winit::State,
-    pub rpass: RenderPass,
-
-    pub tree: SplitTree,
-    pub style: Style,
-    pub global: Global,
-
-    pub drag_start: Option<egui::Pos2>,
-}
-
-impl App {
-    pub fn new(
-        device: &wgpu::Device,
-        window: &Window,
-        output_format: wgpu::TextureFormat,
-        sample_count: u32,
-        root: TreeNode,
-    ) -> Self {
-        let limits = device.limits();
-        let max_texture_side = limits.max_texture_dimension_2d as usize;
-
-        Self {
-            state: egui_winit::State::new(max_texture_side, window),
-            rpass: RenderPass::new(device, output_format, sample_count),
-            ctx: {
-                let context = egui::Context::default();
-                context.set_fonts(crate::global::fonts_with_blender());
-                context
-            },
-
-            tree: SplitTree::new(root),
-            style: Style::default(),
-            global: Global::default(),
-
-            drag_start: None,
-        }
-    }
-
-    pub fn on_event(&mut self, event: WindowEvent) {
-        self.state.on_event(&self.ctx, &event);
-        if let Some(event) = event.to_static() {
-            let parent_scale = self.ctx.pixels_per_point();
-
-            for node in self.tree.iter_mut() {
-                if let TreeNode::Leaf {
-                    tabs,
-                    active,
-                    viewport,
-                    ..
-                } = node
-                {
-                    tabs[*active]
-                        .inner
-                        .on_event(&event, *viewport, parent_scale);
-                }
-            }
-        }
-    }
-
-    pub fn run(
-        &mut self,
-        window: &winit::window::Window,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        target: Target,
-    ) -> Result<bool, BackendError> {
-        let new_input = self.state.take_egui_input(window);
-        self.ctx.begin_frame(new_input);
-
-        {
-            let id = egui::Id::new("#_SHADERLAB_#");
-            let layer_id = egui::LayerId::background();
-            let rect = self.ctx.available_rect();
-
-            let mut ui = egui::Ui::new(self.ctx.clone(), layer_id, id, rect, rect);
-            self.draw(&mut ui, rect);
-        }
-
-        {
-            fn linear_from_srgb(r: f64, g: f64, b: f64) -> [f64; 3] {
-                let cutoff = [r < 0.04045, g < 0.04045, b < 0.04045];
-                let lower = [r / 12.92, g / 12.92, b / 12.92];
-                let higher = [
-                    ((r + 0.055) / 1.055).powf(2.4),
-                    ((g + 0.055) / 1.055).powf(2.4),
-                    ((b + 0.055) / 1.055).powf(2.4),
-                ];
-                [
-                    if cutoff[0] { lower[0] } else { higher[0] },
-                    if cutoff[1] { lower[1] } else { higher[1] },
-                    if cutoff[2] { lower[2] } else { higher[2] },
-                ]
-            }
-
-            let [r, g, b, _] = self.style.app_bg.to_srgba_unmultiplied();
-            let [r, g, b] = [r as f64, g as f64, b as f64];
-            let [r, g, b] = [r / 255.0, g / 255.0, b / 255.0];
-            let [r, g, b] = linear_from_srgb(r, g, b);
-            let a = 1.0;
-            let clear = wgpu::Color { r, g, b, a };
-
-            let attachment = target.attach(true, clear);
-
-            let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui main render pass"),
-                color_attachments: &[attachment],
-                depth_stencil_attachment: None,
-            });
-        }
-
-        let egui::FullOutput {
-            shapes,
-            needs_repaint,
-            textures_delta,
-            platform_output,
-        } = self.ctx.end_frame();
-
-        let scale = self.ctx.pixels_per_point();
-
-        for node in self.tree.iter_mut() {
-            if let TreeNode::Leaf {
-                tabs,
-                active,
-                viewport,
-                ..
-            } = node
-            {
-                let ctx = RenderContext {
-                    window,
-                    device,
-                    queue,
-                    encoder,
-                    attachment: target.attach(true, None),
-                    viewport: self::panel::rect_scale(*viewport, scale),
-                };
-                tabs[*active].inner.render(ctx);
-            }
-        }
-
-        self.state
-            .handle_platform_output(window, &self.ctx, platform_output);
-
-        let size = window.inner_size();
-        let screen_descriptor = ScreenDescriptor {
-            width: size.width,
-            height: size.height,
-            scale: self.ctx.pixels_per_point(),
-        };
-
-        let paint_jobs = self.ctx.tessellate(shapes);
-
-        self.rpass.add_textures(device, queue, &textures_delta)?;
-        self.rpass.remove_textures(textures_delta)?;
-        self.rpass
-            .update_buffers(device, queue, &paint_jobs, &screen_descriptor);
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui main render pass"),
-                color_attachments: &[target.attach(true, None)],
-                depth_stencil_attachment: None,
-            });
-
-            rpass.push_debug_group("egui_pass");
-
-            self.rpass.execute(
-                &mut rpass,
-                &paint_jobs,
-                &screen_descriptor,
-                Rect::EVERYTHING,
-            )?;
-
-            rpass.pop_debug_group();
-        }
-
-        Ok(needs_repaint)
-    }
-}
-*/
-
-fn nested_menus(ui: &mut egui::Ui) {
-    if ui.button("New...").clicked() {
-        ui.close_menu();
-    }
-    if ui.button("Open...").clicked() {
-        ui.close_menu();
-    }
-}
-
 #[allow(clippy::only_used_in_recursion)]
 pub fn ui_root(
     mut drag_start: Local<Option<egui::Pos2>>,
     mut context: ResMut<crate::shell::EguiContext>,
     mut tree: ResMut<SplitTree>,
-    mut scene: ResMut<Scene>,
+    scene: Res<Handle<ReflectScene>>,
+    mut state: ResMut<AnyMap>,
+    mut scenes: ResMut<Assets<ReflectScene>>,
     style: Res<Style>,
+    type_registry: Res<TypeRegistry>,
+    mut assets: ResMut<AssetServer>,
 ) {
+    let scene = scenes.get_mut(scene.clone()).unwrap();
+
     let (rect, mut ui) = {
         let [ctx] = context.ctx_mut([WindowId::primary()]);
 
@@ -339,6 +156,31 @@ pub fn ui_root(
             let space = ui.spacing().button_padding.x;
             ui.add_space(space * 2.0);
 
+            //style.theme(ui);
+            {
+                let mut visuals = ui.visuals().clone();
+                visuals.widgets.noninteractive.bg_stroke.width = 0.0;
+                visuals.widgets.inactive.bg_stroke.width = 0.0;
+                visuals.widgets.hovered.bg_stroke.width = 0.0;
+                visuals.widgets.active.bg_stroke.width = 0.0;
+                visuals.widgets.open.bg_stroke.width = 0.0;
+
+                visuals.popup_shadow = egui::epaint::Shadow::default();
+
+                ui.ctx().set_visuals(visuals);
+            }
+
+            fn nested_menus(ui: &mut egui::Ui) {
+                if ui.button("New...").clicked() {
+                    ui.close_menu();
+                }
+                if ui.button("Open...").clicked() {
+                    ui.close_menu();
+                }
+
+                ui.menu_button("Next", nested_menus);
+            }
+
             ui.menu_button("File", nested_menus);
             ui.menu_button("Edit", nested_menus);
             ui.menu_button("Assets", nested_menus);
@@ -349,6 +191,8 @@ pub fn ui_root(
 
         response.rect
     };
+
+    style.theme(&mut ui);
 
     ui.painter().set(
         tabbar_bg_idx,
@@ -367,13 +211,13 @@ pub fn ui_root(
         let corners = [
             rect.intersect(Rect::everything_above(rect.min.y + separator)),
             rect.intersect(Rect::everything_below(rect.max.y - separator)),
-            rect.intersect(Rect::everything_left_of(rect.min.x + separator)),
-            rect.intersect(Rect::everything_right_of(rect.max.x - separator)),
+            rect.intersect(Rect::everything_left_of(rect.min.x + separator + 2.0)),
+            rect.intersect(Rect::everything_right_of(rect.max.x - separator - 2.0)),
         ];
         for rect in corners {
             ui.painter().rect_filled(rect, 0.0, style.app_bg);
         }
-        rect.shrink(separator)
+        rect.shrink2(egui::vec2(separator + 2.0, separator))
     };
 
     tree[NodeIndex::root()].set_rect(rect);
@@ -439,6 +283,7 @@ pub fn ui_root(
                     ui.painter().line_segment([a, b], (px, style.tab_outline));
 
                     let mut ui = ui.child_ui(tabbar, Default::default());
+                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
                     ui.horizontal(|ui| {
                         for (tab_index, tab) in tabs.iter().enumerate() {
@@ -496,12 +341,15 @@ pub fn ui_root(
 
                     *viewport = rect;
 
-                    let mut ui = ui.child_ui(rect, Default::default());
-                    tab.inner.ui(&mut ui, &style, &mut scene.world);
+                    let ctx = EditorContext {
+                        scene,
+                        state: &mut state,
+                        type_registry: &type_registry,
+                        assets: &mut assets,
+                    };
 
-                    scene.world.insert_resource(ui);
-                    tab.schedule.run(&mut scene.world);
-                    scene.world.remove_resource::<egui::Ui>();
+                    let mut ui = ui.child_ui(rect, Default::default());
+                    tab.inner.ui(&mut ui, &style, ctx);
                 }
 
                 let is_being_dragged = ui.memory().is_anything_being_dragged();
@@ -538,7 +386,7 @@ pub fn ui_root(
                 let tab = tree[src].remove_tab(tab_index).unwrap();
 
                 if let Some(target) = target {
-                    tree.split(dst, TreeNode::leaf(tab), target);
+                    tree.split(dst, target, TreeNode::leaf(tab));
                 } else {
                     tree[dst].append_tab(tab);
                 }

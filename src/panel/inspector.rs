@@ -1,221 +1,95 @@
 use crate::app::TabInner;
-use crate::global::{Icon, SelectedEntity};
+use crate::context::EditorContext;
 use crate::style::Style;
-use bevy::ecs::component::{Component, ComponentId, StorageType};
-use bevy::ecs::schedule::{Schedule, SystemStage};
-use bevy::ecs::world::EntityMut;
-use bevy::prelude::{Entity, IntoExclusiveSystem, Name, World};
-use bevy::utils::HashMap;
+use bevy::reflect::{DynamicStruct, FromType, Reflect, Struct};
+use bevy_reflect::TypeRegistry;
 use egui::style::Margin;
 use egui::text::LayoutJob;
 use egui::widgets::TextEdit;
 use egui::*;
+use std::borrow::Cow;
+
+pub mod field;
 
 #[derive(Default)]
 pub struct Inspector {
-    lock: Option<Entity>,
-}
-
-impl Inspector {
-    pub fn schedule() -> Schedule {
-        let mut schedule = Schedule::default();
-        schedule.add_stage("main", SystemStage::single(draw.exclusive_system()));
-        schedule
-    }
+    lock: Option<usize>,
 }
 
 impl TabInner for Inspector {
-    /*
-    fn ui(&mut self, ui: &mut Ui, style: &Style, world: &mut World) {
-        return;
-
+    fn ui(&mut self, ui: &mut Ui, style: &Style, mut ctx: EditorContext) {
         let rect = ui.available_rect_before_wrap();
-        ui.painter()
-            .rect_filled(rect, 0.0, Color32::from_gray(0x28));
+        ui.painter().rect_filled(rect, 0.0, style.panel);
 
-        let entity = self
-            .lock
-            .or_else(|| world.resource::<SelectedEntity>().0)
-            .and_then(|entity| world.get_entity_mut(entity));
-
-        if let Some(mut entity) = entity {
-            ui.scope(|ui| {
-                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-
-                let scroll = ScrollArea::vertical().auto_shrink([false; 2]);
-                scroll.show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let frame = Frame::none().margin(Margin::symmetric(3.0, 3.0));
-                        frame.fill(style.tab_base).show(ui, |ui| {
-                            {
-                                let icon = if self.lock.is_some() {
-                                    crate::blender::LOCKED
-                                } else {
-                                    crate::blender::UNLOCKED
-                                };
-                                let widget = Button::new(icon.to_string()).frame(false);
-                                if ui.add(widget).clicked() {
-                                    if self.lock.is_some() {
-                                        self.lock.take();
-                                    } else {
-                                        self.lock = Some(entity.id());
-                                    }
-                                }
-                            }
-
-                            ui.add_space(3.0);
-
-                            if let Some(mut state) = entity.get_mut::<Icon>() {
-                                let icon = LayoutJob::simple_singleline(
-                                    state.icon.into(),
-                                    FontId::proportional(20.0),
-                                    style.tab_text,
-                                );
-
-                                let InnerResponse { inner, .. } = ui.menu_button(icon, |ui| {
-                                    let scroll = ScrollArea::vertical().auto_shrink([false; 2]);
-                                    scroll.id_source("inspector icons").show(ui, |ui| {
-                                        ui.set_width(300.0);
-                                        ui.horizontal_wrapped(|ui| {
-                                            for c in 0xE900..=0xEB99 {
-                                                let c = char::from_u32(c).unwrap();
-                                                if ui.button(String::from(c)).clicked() {
-                                                    ui.close_menu();
-                                                    return Some(c);
-                                                }
-                                            }
-
-                                            None
-                                        })
-                                    })
-                                });
-
-                                if let Some(icon) = inner.and_then(|r| r.inner.inner) {
-                                    state.icon = icon;
-                                }
-
-                                ui.add_space(3.0);
-                            }
-
-                            if let Some(mut name) = entity.get_mut::<Name>() {
-                                name.mutate(|text| {
-                                    let text = TextEdit::singleline(text);
-                                    ui.add(text.desired_width(f32::INFINITY));
-                                })
-                            }
-                        });
-                    });
-
-                    for i in 0..8 {
-                        ui.collapsing(format!("Heading #{}", i), |ui| {
-                            for _ in 0..8 {
-                                ui.label("Contents");
-                            }
-                        });
-                    }
+        let entity = match ctx.find_selected(self.lock) {
+            Some(entity) => entity,
+            None => {
+                ui.vertical_centered_justified(|ui| {
+                    ui.label("Select something...");
                 });
-            });
-        } else {
-            ui.vertical_centered_justified(|ui| {
-                ui.label("Select something...");
-            });
-        }
-    }
-    */
-}
+                return;
+            }
+        };
 
-fn draw(world: &mut World) {
-    let selected = world.resource::<SelectedEntity>().0;
-    let style = world.resource::<Style>().clone();
-    let mut ui = world.remove_resource::<egui::Ui>().unwrap();
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
 
-    let rect = ui.available_rect_before_wrap();
-    ui.painter()
-        .rect_filled(rect, 0.0, Color32::from_gray(0x28));
+            style.theme(ui);
+            style.for_scrollbar(ui);
 
-    let entity = selected.and_then(|entity| world.get_entity_mut(entity));
+            let scroll = ScrollArea::vertical().auto_shrink([false; 2]);
+            scroll.show(ui, |ui| {
+                style.scrollarea(ui);
 
-    let mut entity = if let Some(entity) = entity {
-        entity
-    } else {
-        ui.vertical_centered_justified(|ui| {
-            ui.label("Select something...");
-        });
-        return;
-    };
+                let mut type_registry = entity.type_registry.write();
 
-    ui.scope(|ui| {
-        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                let frame = Frame::none();
+                frame.fill(style.panel).show(ui, |ui| {
+                    for component in entity.entity.components.iter_mut().map(AsMut::as_mut) {
+                        let type_name = component.type_name();
 
-        let scroll = ScrollArea::vertical().auto_shrink([false; 2]);
-        scroll.show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let frame = Frame::none().margin(Margin::symmetric(3.0, 3.0));
-                frame.fill(style.tab_base).show(ui, |ui| {
-                    ui.add_space(3.0);
-
-                    if let Some(mut state) = entity.get_mut::<Icon>() {
-                        let icon = LayoutJob::simple_singleline(
-                            state.get().into(),
-                            FontId::proportional(20.0),
-                            style.tab_text,
-                        );
-
-                        let InnerResponse { inner, .. } = ui.menu_button(icon, |ui| {
-                            let scroll = ScrollArea::vertical().auto_shrink([false; 2]);
-                            scroll.id_source("inspector icons").show(ui, |ui| {
-                                ui.set_width(300.0);
-                                ui.horizontal_wrapped(|ui| {
-                                    for c in 0xE900..=0xEB99 {
-                                        let c = char::from_u32(c).unwrap();
-                                        if ui.button(String::from(c)).clicked() {
-                                            ui.close_menu();
-                                            return Some(c);
-                                        }
-                                    }
-
-                                    None
-                                })
-                            })
-                        });
-
-                        if let Some(icon) = inner.and_then(|r| r.inner.inner) {
-                            state.set(icon);
+                        {
+                            use bevy::prelude::*;
+                            add_custom_editor_if::<Parent>(&mut type_registry, type_name);
+                            add_custom_editor_if::<PreviousParent>(&mut type_registry, type_name);
+                            add_custom_editor_if::<Children>(&mut type_registry, type_name);
                         }
 
-                        ui.add_space(3.0);
-                    }
+                        let registration = match type_registry.get_with_name(type_name) {
+                            Some(registration) => registration,
+                            None => continue,
+                        };
 
-                    if let Some(mut name) = entity.get_mut::<Name>() {
-                        name.mutate(|text| {
-                            let text = TextEdit::singleline(text);
-                            ui.add(text.desired_width(f32::INFINITY));
-                        })
+                        if let Some(editor) = registration.data::<ReflectComponentEditor>() {
+                            if editor.skip() {
+                                continue;
+                            }
+                            editor.ui(ui, style, component);
+                        } else {
+                            let name = registration.short_name();
+                            reflect_component_editor(ui, style, component, ' ', name);
+                        }
+
+                        let width = ui.available_width();
+                        let (_, separator) = ui.allocate_space(vec2(width, 1.0));
+                        ui.painter().rect_filled(separator, 0.0, style.separator);
                     }
                 });
             });
-
-            let count = entity.world().components().len();
-
-            let editors = EditorManager::sample(entity.world());
-
-            for component_id in (0..count).map(ComponentId::new) {
-                if entity.contains_id(component_id) {
-                    if entity.world().components().get_info(component_id).is_none() {
-                        continue;
-                    }
-
-                    /*
-                    if !editors.has(component_id) {
-                        continue;
-                    }
-                    */
-
-                    component_collapse(ui, component_id, &mut entity, &editors);
-                }
-            }
         });
-    });
+    }
+}
+
+fn add_custom_editor_if<T: ComponentEditor + Reflect>(
+    type_registry: &mut TypeRegistry,
+    type_name: &str,
+) {
+    if type_name == std::any::type_name::<T>() {
+        if let Some(registration) = type_registry.get_with_name_mut(type_name) {
+            let data: ReflectComponentEditor = FromType::<T>::from_type();
+            registration.insert(data);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -224,8 +98,8 @@ struct State {
 }
 
 impl State {
-    fn load(ctx: &Context, id: Id) -> Option<Self> {
-        ctx.data().get_temp(id)
+    fn load(ctx: &Context, id: Id) -> Self {
+        ctx.data().get_temp(id).unwrap_or(Self { open: true })
     }
 
     fn store(self, ctx: &Context, id: Id) {
@@ -238,68 +112,57 @@ impl State {
     }
 }
 
-fn component_collapse(
+fn reflect_component_editor(
     ui: &mut egui::Ui,
-    component_id: ComponentId,
-    entity: &mut EntityMut<'_>,
-    editors: &EditorManager,
+    style: &Style,
+    reflect: &mut dyn Reflect,
+    icon: char,
+    name: &str,
 ) {
-    let id = Id::new((component_id, "#component_editor"));
-    let info = entity.world().components().get_info(component_id).unwrap();
+    let id = Id::new((reflect.type_name(), "#component_header"));
+    let mut state = State::load(ui.ctx(), id);
 
-    let mut state = State::load(ui.ctx(), id).unwrap_or(State { open: true });
-    let is_open = state.open;
+    if component_header(Some(&mut state), ui, style, icon, name) {
+        let margin = Margin {
+            left: 6.0,
+            right: 2.0,
+            top: 4.0,
+            bottom: 6.0,
+        };
+        Frame::none().margin(margin).show(ui, |ui| {
+            self::field::reflect(ui, reflect);
+        });
+    }
 
-    let top_line = Color32::from_gray(0x15);
-    let header_fill = Color32::from_gray(0x32);
-    let bot_line = Color32::from_gray(0x26);
-    let body_bg = Color32::from_gray(0x2d);
+    state.store(ui.ctx(), id);
+}
 
-    let tri_color = Color32::from_gray(0x57);
-    let text_color = Color32::from_gray(0xa5);
+fn component_header(
+    state: Option<&mut State>,
+    ui: &mut egui::Ui,
+    style: &Style,
+    icon: char,
+    name: &str,
+) -> bool {
+    let tri_color = style.input_text;
+    let text_color = style.input_text;
 
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, 20.0), Sense::click());
     let response = response.on_hover_cursor(CursorIcon::PointingHand);
-    if response.clicked() {
-        state.toggle(ui);
-    }
-
-    let px = ui.ctx().pixels_per_point().recip();
-    ui.painter().rect_filled(rect, 0.0, header_fill);
-
-    let top = [pos2(rect.min.x, rect.min.y), pos2(rect.max.x, rect.min.y)];
-    ui.painter().line_segment(top, (px, top_line));
 
     let tri_pos = rect.left_center() + vec2(8.0, 0.0);
-    let icon_pos = rect.left_center() + vec2(22.0, 0.0);
-    let label_pos = rect.left_center() + vec2(34.0, 0.0);
-
+    let icon_pos = rect.left_center() + vec2(24.0, 0.0);
+    let label_pos = rect.left_center() + vec2(38.0, 0.0);
     let dots_pos = rect.right_center() - vec2(12.0, 0.0);
 
     ui.painter().text(
-        tri_pos,
+        icon_pos,
         Align2::CENTER_CENTER,
-        if is_open {
-            crate::blender::DISCLOSURE_TRI_DOWN
-        } else {
-            crate::blender::DISCLOSURE_TRI_RIGHT
-        },
-        FontId::proportional(18.0),
-        tri_color,
+        icon.to_string(),
+        FontId::proportional(16.0),
+        text_color,
     );
-
-    if let Some(icon) = editors.icon(component_id) {
-        ui.painter().text(
-            icon_pos,
-            Align2::CENTER_CENTER,
-            icon.to_string(),
-            FontId::proportional(16.0),
-            text_color,
-        );
-    }
-
-    let name = editors.name(component_id).unwrap_or_else(|| info.name());
 
     ui.painter().text(
         label_pos,
@@ -317,231 +180,180 @@ fn component_collapse(
         text_color,
     );
 
-    if is_open {
-        let top = [pos2(rect.min.x, rect.max.y), pos2(rect.max.x, rect.max.y)];
-        ui.painter().line_segment(top, (px, bot_line));
-        ui.add_space(px);
-        let bg_idx = ui.painter().add(Shape::Noop);
-
-        let InnerResponse { response, .. } = Frame::none().show(ui, |ui| {
-            if editors.has(component_id) {
-                unsafe { editors.call_ui(entity, component_id, ui) };
+    if let Some(state) = state {
+        if response.clicked() {
+            state.toggle(ui);
+        }
+        ui.painter().text(
+            tri_pos,
+            Align2::CENTER_CENTER,
+            if state.open {
+                crate::blender::DISCLOSURE_TRI_DOWN
             } else {
-                for _ in 0..3 {
-                    ui.label("1234");
-                }
-            }
-        });
-
-        let bg_rect = Rect::from_min_size(
-            response.rect.min,
-            vec2(rect.width(), response.rect.height()),
+                crate::blender::DISCLOSURE_TRI_RIGHT
+            },
+            FontId::proportional(16.0),
+            tri_color,
         );
-
-        ui.painter()
-            .set(bg_idx, Shape::rect_filled(bg_rect, 0.0, body_bg));
+        state.open
+    } else {
+        false
     }
-
-    state.store(ui.ctx(), id);
 }
 
-struct RawEditor {
-    icon: char,
-    name: String,
-    ui: unsafe fn(&mut Ui, *mut u8),
+pub trait ComponentEditor {
+    fn desc() -> (char, Cow<'static, str>) {
+        (' ', "".into())
+    }
+
+    fn skip() -> bool {
+        false
+    }
+
+    fn ui(ui: &mut Ui, style: &Style, reflect: &mut dyn Reflect) {
+        let (icon, name) = Self::desc();
+        reflect_component_editor(ui, style, reflect, icon, &name);
+    }
 }
 
-#[derive(Default)]
-struct EditorManager {
-    editors: HashMap<ComponentId, RawEditor>,
+#[derive(Clone)]
+pub struct ReflectComponentEditor {
+    skip: fn() -> bool,
+    ui: fn(&mut Ui, style: &Style, &mut dyn Reflect),
 }
 
-impl EditorManager {
-    fn sample(world: &World) -> Self {
-        use bevy::prelude::*;
-
-        let mut builder = Self::default();
-
-        unsafe {
-            builder.insert::<Transform, _>(
-                world,
-                crate::blender::ORIENTATION_LOCAL,
-                "Transform",
-                |ui, tx| {
-                    ui_transform(
-                        ui,
-                        &mut tx.translation,
-                        &mut tx.rotation,
-                        &mut tx.scale,
-                        "lt",
-                    )
-                },
-            );
-
-            builder.insert::<bevy::prelude::GlobalTransform, _>(
-                world,
-                crate::blender::ORIENTATION_GLOBAL,
-                "GlobalTransform",
-                |ui, tx| {
-                    ui_transform(
-                        ui,
-                        &mut tx.translation,
-                        &mut tx.rotation,
-                        &mut tx.scale,
-                        "gt",
-                    )
-                },
-            );
-        }
-
-        builder
+impl ReflectComponentEditor {
+    fn skip(&self) -> bool {
+        (self.skip)()
     }
 
-    /// # Safety
-    /// N/A
-    unsafe fn insert<T: Component, S: Into<String>>(
-        &mut self,
-        world: &World,
-        icon: char,
-        name: S,
-        ui: unsafe fn(ui: &mut Ui, data: &mut T),
-    ) {
-        let type_id = std::any::TypeId::of::<T>();
-        let id = world.components().get_id(type_id).unwrap();
-        let raw = RawEditor {
-            icon,
-            name: name.into(),
-            ui: std::mem::transmute(ui),
-        };
-        self.editors.insert(id, raw);
+    fn ui(&self, ui: &mut Ui, style: &Style, reflect: &mut dyn Reflect) {
+        (self.ui)(ui, style, reflect);
     }
+}
 
-    fn icon(&self, id: ComponentId) -> Option<char> {
-        self.editors.get(&id).map(|e| e.icon)
-    }
-
-    fn name(&self, id: ComponentId) -> Option<&str> {
-        self.editors.get(&id).map(|e| e.name.as_ref())
-    }
-
-    fn has(&self, id: ComponentId) -> bool {
-        self.editors.contains_key(&id)
-    }
-
-    unsafe fn call_ui(&self, context: &mut EntityMut<'_>, id: ComponentId, ui: &mut Ui) {
-        let editor = self.editors.get(&id).unwrap();
-        let data = get_component_from_mut(context, id);
-
-        if let Some(data) = data {
-            (editor.ui)(ui, data)
+impl<T: ComponentEditor + Reflect> FromType<T> for ReflectComponentEditor {
+    fn from_type() -> Self {
+        Self {
+            skip: T::skip,
+            ui: T::ui,
         }
     }
 }
 
-#[inline]
-unsafe fn get_component_from_mut(
-    context: &mut EntityMut<'_>,
-    component_id: ComponentId,
-) -> Option<*mut u8> {
-    let (entity, location) = (context.id(), context.location());
-    let world = context.world();
-
-    let archetype = &world.archetypes()[location.archetype_id];
-    // SAFE: component_id exists and is therefore valid
-    let component_info = world.components().get_info_unchecked(component_id);
-    match component_info.storage_type() {
-        StorageType::Table => {
-            let table = &world.storages().tables[archetype.table_id()];
-            let components = table.get_column(component_id)?;
-            let table_row = archetype.entity_table_row(location.index);
-            // SAFE: archetypes only store valid table_rows and the stored component type is T
-            Some(components.get_data_unchecked(table_row))
-        }
-        StorageType::SparseSet => world
-            .storages()
-            .sparse_sets
-            .get(component_id)
-            .and_then(|sparse_set| sparse_set.get(entity)),
+impl ComponentEditor for bevy::prelude::Parent {
+    fn skip() -> bool {
+        true
     }
 }
 
-fn ui_transform(
-    ui: &mut Ui,
-    translation: &mut bevy::prelude::Vec3,
-    rotation: &mut bevy::prelude::Quat,
-    scale: &mut bevy::prelude::Vec3,
+impl ComponentEditor for bevy::prelude::PreviousParent {
+    fn skip() -> bool {
+        true
+    }
+}
 
-    scope_id: impl std::hash::Hash,
-) {
-    use bevy::prelude::*;
+impl ComponentEditor for bevy::prelude::Children {
+    fn skip() -> bool {
+        true
+    }
+}
 
-    let frame = Frame::none().margin(egui::style::Margin::symmetric(2.0, 2.0));
+impl ComponentEditor for crate::asset::ProxyTransform {
+    fn desc() -> (char, Cow<'static, str>) {
+        (crate::blender::ORIENTATION_LOCAL, "Transform".into())
+    }
+}
 
-    frame.show(ui, |ui| {
-        ui.scope(|ui| {
-            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+impl<T: bevy::asset::Asset> ComponentEditor for crate::asset::ProxyHandle<T> {
+    fn desc() -> (char, Cow<'static, str>) {
+        let type_name = std::any::type_name::<T>();
+        if type_name == std::any::type_name::<bevy::prelude::Mesh>() {
+            (crate::blender::MESH_DATA, "Mesh".into())
+        } else if type_name == std::any::type_name::<bevy::prelude::StandardMaterial>() {
+            (crate::blender::MATERIAL_DATA, "StandardMaterial".into())
+        } else {
+            (' ', format!("Handle<{}>", type_name).into())
+        }
+    }
+}
 
-            ui.columns(2, |ui| {
-                ui[0].add(Label::new("translation").sense(Sense::click()));
-                ui[1].columns(3, |ui| {
-                    ui[0].add(DragValue::new(&mut translation.x).speed(0.1));
-                    ui[1].add(DragValue::new(&mut translation.y).speed(0.1));
-                    ui[2].add(DragValue::new(&mut translation.z).speed(0.1));
-                });
-            });
+impl ComponentEditor for crate::asset::ProxyMeta {
+    fn ui(ui: &mut Ui, style: &Style, component: &mut dyn Reflect) {
+        let data = component.downcast_mut::<DynamicStruct>().unwrap();
 
-            let id = Id::new((ui.id(), scope_id, "#euler"));
-            let mut euler: EulerRot = ui.ctx().data().get_temp(id).unwrap_or(EulerRot::XYZ);
-
-            macro_rules! selectable_euler {
-                ($ui:expr, $current:ident, $selected:ident) => {{
-                    let mut response = $ui.selectable_label(
-                        matches!($current, EulerRot::$selected),
-                        format!("{:?}", EulerRot::$selected),
-                    );
-                    if response.clicked() {
-                        $current = EulerRot::$selected;
-                        response.mark_changed();
-                        $ui.close_menu();
+        ui.horizontal(|ui| {
+            let frame = Frame::none().margin(Margin::symmetric(2.0, 3.0));
+            frame.fill(style.tab_base).show(ui, |ui| {
+                /*
+                if false {
+                    let icon = if self.lock.is_some() {
+                        crate::blender::LOCKED
+                    } else {
+                        crate::blender::UNLOCKED
+                    };
+                    let widget = Button::new(icon.to_string()).frame(false);
+                    if ui.add(widget).clicked() {
+                        if self.lock.is_some() {
+                            self.lock.take();
+                        } else {
+                            self.lock = Some(entity.index);
+                        }
                     }
-                }};
-            }
+                    ui.add_space(4.0);
+                }
+                */
 
-            ui.columns(2, |ui| {
-                let label = match euler {
-                    EulerRot::XYZ => String::from("rotation"),
-                    _ => format!("rotation {:?}", euler),
-                };
-                let response = ui[0].add(Label::new(label).sense(Sense::click()));
+                let icon_field = unwrap_field_mut::<u32>(data, "icon");
 
-                response.context_menu(|ui| {
-                    selectable_euler!(ui, euler, XYZ);
-                    selectable_euler!(ui, euler, XZY);
-                    selectable_euler!(ui, euler, YXZ);
-                    selectable_euler!(ui, euler, YZX);
-                    selectable_euler!(ui, euler, ZYX);
-                    selectable_euler!(ui, euler, ZXY);
+                let icon_char = char::from_u32(*icon_field).unwrap();
+                let icon = LayoutJob::simple_singleline(
+                    icon_char.into(),
+                    FontId::proportional(16.0),
+                    style.input_text,
+                );
+
+                let InnerResponse { inner, response } = ui.menu_button(icon, |ui| {
+                    style.for_scrollbar(ui);
+                    let scroll = ScrollArea::vertical().auto_shrink([false; 2]);
+                    scroll.id_source("inspector icons").show(ui, |ui| {
+                        style.theme(ui);
+                        style.scrollarea(ui);
+                        ui.set_width(300.0);
+                        ui.horizontal_wrapped(|ui| {
+                            for c in 0xE900..=0xEB99 {
+                                let c = char::from_u32(c).unwrap();
+                                if ui.button(String::from(c)).clicked() {
+                                    ui.close_menu();
+                                    return Some(c);
+                                }
+                            }
+
+                            None
+                        })
+                    })
                 });
+                response.on_hover_cursor(egui::CursorIcon::PointingHand);
 
-                ui[1].columns(3, |ui| {
-                    let (mut a, mut b, mut c) = rotation.to_euler(euler);
-                    ui[0].drag_angle(&mut a);
-                    ui[1].drag_angle(&mut b);
-                    ui[2].drag_angle(&mut c);
-                    *rotation = Quat::from_euler(euler, a, b, c);
-                });
-            });
+                if let Some(icon) = inner.and_then(|r| r.inner.inner) {
+                    *icon_field = icon as u32;
+                }
 
-            ui.ctx().data().insert_temp(id, euler);
+                ui.add_space(4.0);
 
-            ui.columns(2, |ui| {
-                ui[0].add(Label::new("scale").sense(Sense::click()));
-                ui[1].columns(3, |ui| {
-                    ui[0].add(DragValue::new(&mut scale.x).speed(0.1));
-                    ui[1].add(DragValue::new(&mut scale.y).speed(0.1));
-                    ui[2].add(DragValue::new(&mut scale.z).speed(0.1));
-                });
+                let name = unwrap_field_mut::<Cow<'static, str>>(data, "name");
+
+                let text = TextEdit::singleline(name.to_mut());
+                ui.add(text.desired_width(f32::INFINITY));
             });
         });
-    });
+    }
+}
+
+pub fn unwrap_field_ref<'a, T: Reflect>(data: &'a DynamicStruct, name: &str) -> &'a T {
+    data.field(name).unwrap().downcast_ref::<T>().unwrap()
+}
+
+pub fn unwrap_field_mut<'a, T: Reflect>(data: &'a mut DynamicStruct, name: &str) -> &'a mut T {
+    data.field_mut(name).unwrap().downcast_mut::<T>().unwrap()
 }

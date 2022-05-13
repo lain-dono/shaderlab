@@ -1,4 +1,5 @@
 use crate::app::TabInner;
+use crate::context::EditorContext;
 use crate::style::Style;
 use bevy::prelude::*;
 
@@ -8,7 +9,7 @@ pub struct SceneTab {
 }
 
 impl TabInner for SceneTab {
-    fn ui(&mut self, ui: &mut egui::Ui, _style: &Style, _world: &mut World) {
+    fn ui(&mut self, ui: &mut egui::Ui, _style: &Style, _ctx: EditorContext) {
         let size = ui.available_size_before_wrap();
         if let Some(texture_id) = self.texture_id {
             ui.add(egui::widgets::Image::new(texture_id, size));
