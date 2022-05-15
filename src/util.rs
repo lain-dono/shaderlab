@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+pub mod anymap;
 pub mod reflect;
 
 pub fn enable_tracing() {

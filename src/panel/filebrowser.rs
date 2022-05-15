@@ -25,27 +25,27 @@ fn read_dir(ui: &mut egui::Ui, io: &dyn AssetIo, path: &Path) {
             for path in dir {
                 let path_string = path.file_name().unwrap().to_string_lossy().to_string();
                 if io.is_directory(&path) {
-                    ui.label(format!("{} {}", crate::blender::FILE_FOLDER, path_string));
+                    ui.label(format!("{} {}", crate::icon::FILE_FOLDER, path_string));
                     read_dir(ui, io, &path);
                 } else {
                     let ext = path.extension().map(OsStr::to_string_lossy);
                     let icon = if let Some(ext) = ext.as_deref() {
                         match ext {
-                            "scene" => crate::blender::SCENE_DATA,
-                            "material" => crate::blender::MATERIAL_DATA,
-                            "image" => crate::blender::TEXTURE_DATA,
-                            "mesh" => crate::blender::MESH_DATA,
+                            "scene" => crate::icon::SCENE_DATA,
+                            "material" => crate::icon::MATERIAL_DATA,
+                            "image" => crate::icon::TEXTURE_DATA,
+                            "mesh" => crate::icon::MESH_DATA,
 
-                            "shader" => crate::blender::NODE_MATERIAL,
+                            "shader" => crate::icon::NODE_MATERIAL,
 
-                            "gltf" | "glb" => crate::blender::FILE_3D,
-                            "jpg" | "jpeg" | "png" => crate::blender::FILE_IMAGE,
-                            "mp3" | "ogg" | "flac" | "wav" => crate::blender::FILE_SOUND,
+                            "gltf" | "glb" => crate::icon::FILE_3D,
+                            "jpg" | "jpeg" | "png" => crate::icon::FILE_IMAGE,
+                            "mp3" | "ogg" | "flac" | "wav" => crate::icon::FILE_SOUND,
 
-                            _ => crate::blender::FILE,
+                            _ => crate::icon::FILE,
                         }
                     } else {
-                        crate::blender::FILE
+                        crate::icon::FILE
                     };
 
                     ui.label(format!("{} {}", icon, path_string));

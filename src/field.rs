@@ -5,6 +5,7 @@ use egui::{DragValue, Ui, WidgetText};
 use std::borrow::Cow;
 
 const WRAP_WIDTH: f32 = 235.0;
+pub const PERCENT: f32 = 0.35;
 
 pub fn reflect(ui: &mut Ui, reflect: &mut dyn Reflect) {
     ui.scope(|ui| {
@@ -119,6 +120,31 @@ impl Builder {
                     return;
                 }
 
+                if let Some(value) = reflect.downcast_mut::<Color>() {
+                    match value {
+                        Color::Rgba {
+                            red,
+                            green,
+                            blue,
+                            alpha,
+                        } => {
+                            let mut rgba =
+                                egui::Rgba::from_rgba_premultiplied(*red, *green, *blue, *alpha);
+                            let alpha_mode = egui::widgets::color_picker::Alpha::Opaque;
+                            egui::widgets::color_picker::color_edit_button_rgba(
+                                ui, &mut rgba, alpha_mode,
+                            );
+                            *red = rgba.r();
+                            *green = rgba.g();
+                            *blue = rgba.b();
+                            *alpha = rgba.a();
+                        }
+                        _ => (),
+                    }
+
+                    return;
+                }
+
                 if let Some(value) = reflect.downcast_mut::<HandleId>() {
                     ui.label(format!("{:?}", value));
                     return;
@@ -190,12 +216,11 @@ impl Builder {
         let width = ui.available_width();
         let height = 18.0;
         let pad = 16.0;
-        let percent = 0.35;
 
         let run_label = |ui: &mut egui::Ui| {
             let indent = pad * self.level as f32;
             let _ = ui.allocate_space(egui::vec2(indent, height));
-            let (id, space) = ui.allocate_space(egui::vec2(width * percent - indent, height));
+            let (id, space) = ui.allocate_space(egui::vec2(width * PERCENT - indent, height));
             let layout = egui::Layout::left_to_right();
             let mut ui = ui.child_ui_with_id_source(space, layout, id);
             ui.label(label);

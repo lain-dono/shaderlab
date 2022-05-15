@@ -5,7 +5,7 @@ use bevy::reflect::TypeRegistryArc;
 pub struct SelectedEntity(pub Option<Entity>);
 
 pub fn fonts_with_blender() -> egui::FontDefinitions {
-    let font = egui::FontData::from_static(include_bytes!("blender.ttf"));
+    let font = egui::FontData::from_static(include_bytes!("icon.ttf"));
 
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert("blender".to_owned(), font);
@@ -29,26 +29,26 @@ pub fn fonts_with_blender() -> egui::FontDefinitions {
 }
 
 fn exampe_scene() -> World {
-    use crate::asset::{ProxyHandle, ProxyMeta, ProxyTransform};
+    use crate::component::{ProxyHandle, ProxyMeta, ProxyPointLight, ProxyTransform};
     use bevy::ecs::world::EntityMut;
 
     fn new<'a>(builder: &'a mut WorldChildBuilder, prefix: &str, counter: usize) -> EntityMut<'a> {
         let icon = match counter % 14 {
-            0 => crate::blender::MESH_CONE,
-            1 => crate::blender::MESH_PLANE,
-            2 => crate::blender::MESH_CYLINDER,
-            3 => crate::blender::MESH_ICOSPHERE,
-            4 => crate::blender::MESH_CAPSULE,
-            5 => crate::blender::MESH_UVSPHERE,
-            6 => crate::blender::MESH_CIRCLE,
-            7 => crate::blender::MESH_MONKEY,
-            8 => crate::blender::MESH_TORUS,
-            9 => crate::blender::MESH_CUBE,
+            0 => crate::icon::MESH_CONE,
+            1 => crate::icon::MESH_PLANE,
+            2 => crate::icon::MESH_CYLINDER,
+            3 => crate::icon::MESH_ICOSPHERE,
+            4 => crate::icon::MESH_CAPSULE,
+            5 => crate::icon::MESH_UVSPHERE,
+            6 => crate::icon::MESH_CIRCLE,
+            7 => crate::icon::MESH_MONKEY,
+            8 => crate::icon::MESH_TORUS,
+            9 => crate::icon::MESH_CUBE,
 
-            10 => crate::blender::OUTLINER_OB_CAMERA,
-            11 => crate::blender::OUTLINER_OB_EMPTY,
-            12 => crate::blender::OUTLINER_OB_LIGHT,
-            13 => crate::blender::OUTLINER_OB_SPEAKER,
+            10 => crate::icon::OUTLINER_OB_CAMERA,
+            11 => crate::icon::OUTLINER_OB_EMPTY,
+            12 => crate::icon::OUTLINER_OB_LIGHT,
+            13 => crate::icon::OUTLINER_OB_SPEAKER,
 
             _ => unreachable!(),
         };
@@ -65,10 +65,19 @@ fn exampe_scene() -> World {
     let mut world = World::new();
     world.insert_resource(SelectedEntity(None));
 
+    world.spawn().insert_bundle((
+        ProxyMeta::new(crate::icon::LIGHT_POINT, "Point Light"),
+        ProxyTransform {
+            translation: Vec3::new(0.0, 0.0, 10.0),
+            ..default()
+        },
+        ProxyPointLight::default(),
+    ));
+
     let mut counter = 0;
 
     for _ in 0..2 {
-        let icon = crate::blender::MESH_CUBE;
+        let icon = crate::icon::MESH_CUBE;
         world
             .spawn()
             .insert_bundle((
@@ -141,27 +150,27 @@ pub fn setup(
 
 fn init_split_tree() -> crate::app::SplitTree {
     use crate::app::*;
-    use crate::blender;
+    use crate::icon;
     use crate::panel::{FileBrowser, Hierarchy, Inspector, PlaceholderTab, SceneTab};
 
     type NodeTodo = PlaceholderTab;
 
     let node_tree = PlaceholderTab::default();
-    let node_tree = Tab::new(blender::NODETREE, "Node Tree", node_tree);
-    let scene = Tab::new(blender::VIEW3D, "Scene", SceneTab::default());
+    let node_tree = Tab::new(icon::NODETREE, "Node Tree", node_tree);
+    let scene = Tab::new(icon::VIEW3D, "Scene", SceneTab::default());
 
-    let hierarchy = Tab::new(blender::OUTLINER, "Hierarchy", Hierarchy::default());
-    let inspector = Tab::new(blender::PROPERTIES, "Inspector", Inspector::default());
+    let hierarchy = Tab::new(icon::OUTLINER, "Hierarchy", Hierarchy::default());
+    let inspector = Tab::new(icon::PROPERTIES, "Inspector", Inspector::default());
 
-    let files = Tab::new(blender::FILEBROWSER, "File Browser", FileBrowser::default());
-    let assets = Tab::new(blender::ASSET_MANAGER, "Asset Manager", NodeTodo::default());
+    let files = Tab::new(icon::FILEBROWSER, "File Browser", FileBrowser::default());
+    let assets = Tab::new(icon::ASSET_MANAGER, "Asset Manager", NodeTodo::default());
 
     let root = TreeNode::leaf_with(vec![scene, node_tree]);
     let mut split_tree = SplitTree::new(root);
 
-    let [a, b] = split_tree.split_tabs(NodeIndex::root(), Split::Right, vec![inspector]);
-    let [_, _] = split_tree.split_tabs(a, Split::Below, vec![files, assets]);
-    let [_, _] = split_tree.split_tabs(b, Split::Above, vec![hierarchy]);
+    let [a, b] = split_tree.split_tabs(NodeIndex::root(), Split::Left, 0.3, vec![inspector]);
+    let [_, _] = split_tree.split_tabs(a, Split::Below, 0.7, vec![files, assets]);
+    let [_, _] = split_tree.split_tabs(b, Split::Below, 0.5, vec![hierarchy]);
 
     split_tree
 }

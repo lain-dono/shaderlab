@@ -27,11 +27,7 @@ pub fn debug_reflect(level: usize, reflect: &dyn Reflect) {
         ReflectRef::Tuple(reflect) => debug_tuple(level + 1, reflect),
         ReflectRef::List(reflect) => debug_list(level + 1, reflect),
         ReflectRef::Map(reflect) => debug_map(level + 1, reflect),
-        //ReflectRef::Value(reflect) => (),
-        ReflectRef::Value(reflect) => {
-            println!("{}", reflect.type_name());
-            //debug_reflect(level + 1, reflect),
-        }
+        ReflectRef::Value(reflect) => println!("{}", reflect.type_name()),
     }
 }
 
@@ -68,10 +64,10 @@ pub fn debug_tuple(level: usize, reflect: &(dyn Tuple + 'static)) {
     }
 }
 
-pub fn debug_list(level: usize, reflect: &(dyn List + 'static)) {
+pub fn debug_list(_level: usize, reflect: &(dyn List + 'static)) {
     println!("list<{}>", reflect.type_name());
 }
 
-pub fn debug_map(level: usize, reflect: &(dyn Map + 'static)) {
+pub fn debug_map(_level: usize, reflect: &(dyn Map + 'static)) {
     println!("map<{}>", reflect.type_name());
 }

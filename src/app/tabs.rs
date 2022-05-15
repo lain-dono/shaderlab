@@ -252,13 +252,20 @@ impl SplitTree {
         &mut self,
         parent: NodeIndex,
         split: Split,
+        fraction: f32,
         tabs: Vec<Tab>,
     ) -> [NodeIndex; 2] {
-        self.split(parent, split, TreeNode::leaf_with(tabs))
+        self.split(parent, split, fraction, TreeNode::leaf_with(tabs))
     }
 
-    pub fn split(&mut self, parent: NodeIndex, split: Split, new: TreeNode) -> [NodeIndex; 2] {
-        let old = self[parent].split(split, 0.5);
+    pub fn split(
+        &mut self,
+        parent: NodeIndex,
+        split: Split,
+        fraction: f32,
+        new: TreeNode,
+    ) -> [NodeIndex; 2] {
+        let old = self[parent].split(split, fraction);
         assert!(old.is_leaf());
         self.fix_len_parent(parent);
 

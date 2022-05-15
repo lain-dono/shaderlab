@@ -1,11 +1,8 @@
 use crate::app::TabInner;
-use crate::asset::ProxyMeta;
-use crate::context::EditorContext;
-use crate::global::SelectedEntity;
+use crate::component::ProxyMeta;
+use crate::context::{EditorContext, ReflectEntityGetters};
 use crate::style::Style;
-use bevy::ecs::schedule::{Schedule, SystemStage};
-use bevy::prelude::{Children, Entity, Name, Parent, Visibility, Without};
-use bevy::prelude::{Local, Query, Res, ResMut};
+use bevy::prelude::{Entity, Parent};
 use bevy::utils::HashMap;
 use egui::style::Margin;
 use egui::widgets::TextEdit;
@@ -65,8 +62,8 @@ struct State {
 }
 
 impl State {
-    fn load(ctx: &Context, id: Id) -> Option<Self> {
-        ctx.data().get_temp(id)
+    pub fn load(ctx: &Context, id: Id) -> Self {
+        ctx.data().get_temp(id).unwrap_or(Self { open: true })
     }
 
     fn store(self, ctx: &Context, id: Id) {
@@ -89,7 +86,7 @@ fn item_widget(
     ctx: &mut EditorContext,
 ) {
     let id = Id::new((entity, "#hierarchy_item"));
-    let mut state = State::load(ui.ctx(), id).unwrap_or(State { open: true });
+    let mut state = State::load(ui.ctx(), id);
     let is_open = state.open;
 
     let fill_color = style.panel;
@@ -119,9 +116,9 @@ fn item_widget(
     let cursor = CursorIcon::PointingHand;
     let sense = Sense::click();
 
-    let mut editor = ctx.get(entity).unwrap();
+    let editor = ctx.get(entity).unwrap();
 
-    if let Some(icon) = editor.struct_field_mut::<ProxyMeta, u32>("icon") {
+    if let Some(icon) = editor.entity.struct_field_mut::<ProxyMeta, u32>("icon") {
         let rect = Rect::from_center_size(custom_icon_pos, vec2(16.0, 20.0));
         let response = ui.allocate_rect(rect, sense).on_hover_cursor(cursor);
 
@@ -135,6 +132,7 @@ fn item_widget(
     }
 
     if let Some(name) = editor
+        .entity
         .struct_field_mut::<ProxyMeta, Cow<'static, str>>("name")
         .map(Cow::to_mut)
     {
@@ -147,7 +145,10 @@ fn item_widget(
         );
     }
 
-    if let Some(is_visible) = editor.struct_field_mut::<ProxyMeta, bool>("is_visible") {
+    if let Some(is_visible) = editor
+        .entity
+        .struct_field_mut::<ProxyMeta, bool>("is_visible")
+    {
         let rect = Rect::from_center_size(hide_icon_pos, vec2(16.0, 20.0));
         let response = ui.allocate_rect(rect, sense).on_hover_cursor(cursor);
         if response.clicked() {
@@ -157,9 +158,9 @@ fn item_widget(
             hide_icon_pos,
             Align2::CENTER_CENTER,
             if *is_visible {
-                crate::blender::HIDE_OFF
+                crate::icon::HIDE_OFF
             } else {
-                crate::blender::HIDE_ON
+                crate::icon::HIDE_ON
             },
             FontId::proportional(16.0),
             text_color,
@@ -180,9 +181,9 @@ fn item_widget(
             tri_icon_pos,
             Align2::CENTER_CENTER,
             if is_open {
-                crate::blender::DISCLOSURE_TRI_DOWN
+                crate::icon::DISCLOSURE_TRI_DOWN
             } else {
-                crate::blender::DISCLOSURE_TRI_RIGHT
+                crate::icon::DISCLOSURE_TRI_RIGHT
             },
             FontId::proportional(16.0),
             tri_color,

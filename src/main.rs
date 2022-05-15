@@ -1,6 +1,7 @@
 #![allow(clippy::forget_non_drop)]
 #![allow(clippy::too_many_arguments)]
 
+use crate::util::anymap::AnyMap;
 use bevy::core_pipeline::{
     draw_3d_graph, node, AlphaMask3d, Opaque3d, RenderTargetClearColors, Transparent3d,
 };
@@ -20,13 +21,13 @@ use bevy::render::{
 use bevy::window::{PresentMode, WindowId};
 use bevy::winit::{UpdateMode, WinitSettings};
 
-mod blender;
-
-mod asset;
-
 mod app;
+mod asset;
+mod component;
 mod context;
+mod field;
 mod global;
+mod icon;
 mod panel;
 mod shell;
 mod style;
@@ -50,9 +51,9 @@ fn main() {
             present_mode: PresentMode::Mailbox,
             ..default()
         })
-        .init_resource::<crate::context::AnyMap>()
+        .init_resource::<AnyMap>()
         .add_plugins_with(DefaultPlugins, |group| group.disable::<LogPlugin>())
-        .add_plugin(crate::asset::EditroAssetPlugin)
+        .add_plugin(crate::component::EditorPlugin)
         .add_plugin(shell::EguiPlugin)
         .add_plugin(CameraTypePlugin::<FirstPassCamera>::default())
         // Optimal power saving and present mode settings for desktop apps.
@@ -69,7 +70,6 @@ fn main() {
         .add_startup_system(setup)
         .add_startup_system(crate::global::setup)
         .add_system(crate::app::ui_root)
-        .add_system_to_stage(CoreStage::First, scene_force_set_changed.exclusive_system())
         .insert_resource(crate::panel::scene::SceneRenderTarget(None))
         .add_system(crate::panel::scene::update_scene_render_target.after(crate::app::ui_root))
         .add_system(cube_rotator_system)
@@ -78,21 +78,6 @@ fn main() {
     init_graph(app.sub_app_mut(RenderApp)).unwrap();
 
     app.run();
-}
-
-fn scene_force_set_changed(world: &mut World) {
-    /*
-    if let Some(mut handle) = handle {
-        dbg!();
-        //handle.set_changed();
-    }
-    */
-
-    if let Some(handle) = world.get_resource::<Handle<DynamicScene>>().cloned() {
-        world.resource_scope(|world, mut spawner: Mut<SceneSpawner>| {
-            spawner.update_spawned_scenes(world, &[handle]).unwrap();
-        });
-    }
 }
 
 fn init_graph(render_app: &mut App) -> Result<(), RenderGraphError> {
@@ -177,28 +162,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut clear_colors: ResMut<RenderTargetClearColors>,
-
-    assets: Res<AssetServer>,
 ) {
-    if false {
-        //let mesh = assets.load("models/cube.gltf#Mesh0/Primitive0");
-        let mesh = assets.load("BoxTextured.glb#Mesh0/Primitive0");
-        let material = assets.load("BoxTextured.glb#Material0");
-        //let mesh = assets.load("Lantern.glb#Mesh0/Primitive0");
-
-        commands.spawn().insert_bundle(PbrBundle {
-            mesh,
-            material,
-            transform: Transform {
-                translation: Vec3::new(0.0, 0.0, 1.5),
-                rotation: Quat::from_rotation_x(-std::f32::consts::PI / 5.0),
-                //scale: Vec3::splat(3.0),
-                ..default()
-            },
-            ..default()
-        });
-    }
-
     let (first_pass_layer, image_handle) = {
         let size = Extent3d {
             width: 32,
@@ -283,13 +247,6 @@ fn setup(
             .insert(FirstPassCube)
             .insert(first_pass_layer);
     }
-
-    // Light
-    // NOTE: Currently lights are shared between passes - see https://github.com/bevyengine/bevy/issues/3462
-    commands.spawn_bundle(PointLightBundle {
-        transform: Transform::from_translation(Vec3::new(0.0, 0.0, 10.0)),
-        ..default()
-    });
 
     if false {
         let mesh = meshes.add(Mesh::from(shape::Cube { size: 4.0 }));

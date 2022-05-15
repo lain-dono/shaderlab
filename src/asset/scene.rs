@@ -1,3 +1,4 @@
+use crate::component::ReflectProxy;
 use anyhow::Result;
 use bevy::app::prelude::*;
 use bevy::asset::{AddAsset, AssetEvent, AssetLoader, Assets, Handle, LoadContext, LoadedAsset};
@@ -61,14 +62,14 @@ pub fn scene_spawner_system(world: &mut World) {
 
 #[derive(Debug)]
 pub struct ReflectSceneLoader {
-    type_registry: TypeRegistryArc,
+    registry: TypeRegistryArc,
 }
 
 impl FromWorld for ReflectSceneLoader {
     fn from_world(world: &mut World) -> Self {
-        let type_registry = world.resource::<TypeRegistryArc>();
-        let type_registry = (*type_registry).clone();
-        Self { type_registry }
+        let registry = world.resource::<TypeRegistryArc>();
+        let registry = (*registry).clone();
+        Self { registry }
     }
 }
 
@@ -81,7 +82,7 @@ impl AssetLoader for ReflectSceneLoader {
         Box::pin(async move {
             let mut ron_deserializer = ron::de::Deserializer::from_bytes(bytes)?;
             let scene_deserializer = SceneDeserializer {
-                type_registry: &*self.type_registry.read(),
+                registry: &*self.registry.read(),
             };
             let scene = scene_deserializer.deserialize(&mut ron_deserializer)?;
             load_context.set_default_asset(LoadedAsset::new(scene));
@@ -294,9 +295,9 @@ pub struct ReflectScene {
 
 impl ReflectScene {
     /// Create a new dynamic scene from a given world.
-    pub fn from_world(world: &World, type_registry: &TypeRegistryArc) -> Self {
+    pub fn from_world(world: &World, registry: &TypeRegistryArc) -> Self {
         let mut entities = Vec::new();
-        let type_registry = type_registry.read();
+        let registry = registry.read();
 
         for archetype in world.archetypes().iter() {
             let offset = entities.len();
@@ -315,7 +316,7 @@ impl ReflectScene {
                 let reflect = world
                     .components()
                     .get_info(component_id)
-                    .and_then(|info| type_registry.get(info.type_id().unwrap()))
+                    .and_then(|info| registry.get(info.type_id().unwrap()))
                     .and_then(|registration| registration.data::<ReflectComponent>());
 
                 if let Some(reflect) = reflect {
@@ -342,8 +343,8 @@ impl ReflectScene {
         world: &mut World,
         entity_map: &mut EntityMap,
     ) -> Result<(), ReflectSceneSpawnError> {
-        let type_registry = world.resource::<TypeRegistryArc>().clone();
-        let type_registry = type_registry.read();
+        let registry = world.resource::<TypeRegistryArc>().clone();
+        let registry = registry.read();
 
         for ReflectEntity { entity, components } in &self.entities {
             // Fetch the entity with the given entity id from the `entity_map`
@@ -356,13 +357,13 @@ impl ReflectScene {
             // Apply/ add each component to the given entity.
             for component in components.iter().map(AsRef::as_ref) {
                 let type_name = component.type_name();
-                let registration = type_registry.get_with_name(type_name).ok_or_else(|| {
+                let registration = registry.get_with_name(type_name).ok_or_else(|| {
                     ReflectSceneSpawnError::UnregisteredType {
                         type_name: type_name.to_string(),
                     }
                 })?;
 
-                if let Some(proxy) = registration.data::<super::proxy::ReflectProxyComponent>() {
+                if let Some(proxy) = registration.data::<ReflectProxy>() {
                     proxy.resolve_and_add(world, entity, component);
                     continue;
                 }
@@ -386,7 +387,7 @@ impl ReflectScene {
             }
         }
 
-        for registration in type_registry.iter() {
+        for registration in registry.iter() {
             if let Some(reflect) = registration.data::<ReflectMapEntities>() {
                 reflect.map_entities(world, entity_map).unwrap();
             }
@@ -413,15 +414,12 @@ where
 
 pub struct SceneSerializer<'a> {
     pub scene: &'a ReflectScene,
-    pub type_registry: &'a TypeRegistryArc,
+    pub registry: &'a TypeRegistryArc,
 }
 
 impl<'a> SceneSerializer<'a> {
-    pub fn new(scene: &'a ReflectScene, type_registry: &'a TypeRegistryArc) -> Self {
-        Self {
-            scene,
-            type_registry,
-        }
+    pub fn new(scene: &'a ReflectScene, registry: &'a TypeRegistryArc) -> Self {
+        Self { scene, registry }
     }
 }
 
@@ -434,7 +432,7 @@ impl<'a> Serialize for SceneSerializer<'a> {
         for entity in &self.scene.entities {
             state.serialize_element(&EntitySerializer {
                 entity,
-                type_registry: self.type_registry,
+                registry: self.registry,
             })?;
         }
         state.end()
@@ -443,7 +441,7 @@ impl<'a> Serialize for SceneSerializer<'a> {
 
 pub struct EntitySerializer<'a> {
     pub entity: &'a ReflectEntity,
-    pub type_registry: &'a TypeRegistryArc,
+    pub registry: &'a TypeRegistryArc,
 }
 
 impl<'a> Serialize for EntitySerializer<'a> {
@@ -457,7 +455,7 @@ impl<'a> Serialize for EntitySerializer<'a> {
             ENTITY_FIELD_COMPONENTS,
             &ComponentsSerializer {
                 components: &self.entity.components,
-                registry: self.type_registry,
+                registry: self.registry,
             },
         )?;
         state.end()
@@ -486,7 +484,7 @@ impl<'a> Serialize for ComponentsSerializer<'a> {
 }
 
 pub struct SceneDeserializer<'a> {
-    pub type_registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistry,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for SceneDeserializer<'a> {
@@ -496,14 +494,14 @@ impl<'a, 'de> DeserializeSeed<'de> for SceneDeserializer<'a> {
     where
         D: serde::Deserializer<'de>,
     {
-        let Self { type_registry } = self;
-        let entities = deserializer.deserialize_seq(SceneEntitySeqVisitor { type_registry })?;
+        let Self { registry } = self;
+        let entities = deserializer.deserialize_seq(SceneEntitySeqVisitor { registry })?;
         Ok(Self::Value { entities })
     }
 }
 
 struct SceneEntitySeqVisitor<'a> {
-    pub type_registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistry,
 }
 
 impl<'a, 'de> serde::de::Visitor<'de> for SceneEntitySeqVisitor<'a> {
@@ -517,9 +515,9 @@ impl<'a, 'de> serde::de::Visitor<'de> for SceneEntitySeqVisitor<'a> {
     where
         A: serde::de::SeqAccess<'de>,
     {
-        let Self { type_registry } = self;
+        let Self { registry } = self;
         let mut entities = Vec::new();
-        while let Some(entity) = seq.next_element_seed(SceneEntityDeserializer { type_registry })? {
+        while let Some(entity) = seq.next_element_seed(SceneEntityDeserializer { registry })? {
             entities.push(entity);
         }
         Ok(entities)
@@ -527,7 +525,7 @@ impl<'a, 'de> serde::de::Visitor<'de> for SceneEntitySeqVisitor<'a> {
 }
 
 pub struct SceneEntityDeserializer<'a> {
-    pub type_registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistry,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for SceneEntityDeserializer<'a> {
@@ -537,11 +535,11 @@ impl<'a, 'de> DeserializeSeed<'de> for SceneEntityDeserializer<'a> {
     where
         D: serde::Deserializer<'de>,
     {
-        let Self { type_registry } = self;
+        let Self { registry } = self;
         deserializer.deserialize_struct(
             ENTITY_STRUCT,
             &[ENTITY_FIELD_ENTITY, ENTITY_FIELD_COMPONENTS],
-            SceneEntityVisitor { type_registry },
+            SceneEntityVisitor { registry },
         )
     }
 }
@@ -558,7 +556,7 @@ pub const ENTITY_FIELD_ENTITY: &str = "entity";
 pub const ENTITY_FIELD_COMPONENTS: &str = "components";
 
 struct SceneEntityVisitor<'a> {
-    pub type_registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistry,
 }
 
 impl<'a, 'de> serde::de::Visitor<'de> for SceneEntityVisitor<'a> {
@@ -572,7 +570,7 @@ impl<'a, 'de> serde::de::Visitor<'de> for SceneEntityVisitor<'a> {
     where
         A: serde::de::MapAccess<'de>,
     {
-        let Self { type_registry } = self;
+        let Self { registry } = self;
         let mut id = None;
         let mut components = None;
         while let Some(key) = map.next_key()? {
@@ -588,8 +586,7 @@ impl<'a, 'de> serde::de::Visitor<'de> for SceneEntityVisitor<'a> {
                         return Err(Error::duplicate_field(ENTITY_FIELD_COMPONENTS));
                     }
 
-                    components =
-                        Some(map.next_value_seed(ComponentVecDeserializer { type_registry })?);
+                    components = Some(map.next_value_seed(ComponentVecDeserializer { registry })?);
                 }
             }
         }
@@ -609,7 +606,7 @@ impl<'a, 'de> serde::de::Visitor<'de> for SceneEntityVisitor<'a> {
 }
 
 pub struct ComponentVecDeserializer<'a> {
-    pub type_registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistry,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for ComponentVecDeserializer<'a> {
@@ -619,13 +616,13 @@ impl<'a, 'de> DeserializeSeed<'de> for ComponentVecDeserializer<'a> {
     where
         D: serde::Deserializer<'de>,
     {
-        let Self { type_registry } = self;
-        deserializer.deserialize_seq(ComponentSeqVisitor { type_registry })
+        let Self { registry } = self;
+        deserializer.deserialize_seq(ComponentSeqVisitor { registry })
     }
 }
 
 struct ComponentSeqVisitor<'a> {
-    pub type_registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistry,
 }
 
 impl<'a, 'de> serde::de::Visitor<'de> for ComponentSeqVisitor<'a> {
@@ -639,9 +636,9 @@ impl<'a, 'de> serde::de::Visitor<'de> for ComponentSeqVisitor<'a> {
     where
         A: serde::de::SeqAccess<'de>,
     {
-        let Self { type_registry } = self;
+        let Self { registry } = self;
         let mut dynamic_properties = Vec::new();
-        while let Some(entity) = seq.next_element_seed(ReflectDeserializer::new(type_registry))? {
+        while let Some(entity) = seq.next_element_seed(ReflectDeserializer::new(registry))? {
             dynamic_properties.push(entity);
         }
         Ok(dynamic_properties)

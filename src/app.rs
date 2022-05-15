@@ -1,6 +1,7 @@
 use crate::asset::ReflectScene;
-use crate::context::{AnyMap, EditorContext};
+use crate::context::EditorContext;
 use crate::style::Style;
+use crate::util::anymap::AnyMap;
 use bevy::prelude::*;
 use bevy::reflect::TypeRegistry;
 use bevy::window::WindowId;
@@ -344,7 +345,7 @@ pub fn ui_root(
                     let ctx = EditorContext {
                         scene,
                         state: &mut state,
-                        type_registry: &type_registry,
+                        types: &type_registry,
                         assets: &mut assets,
                     };
 
@@ -386,7 +387,7 @@ pub fn ui_root(
                 let tab = tree[src].remove_tab(tab_index).unwrap();
 
                 if let Some(target) = target {
-                    tree.split(dst, target, TreeNode::leaf(tab));
+                    tree.split(dst, target, 0.5, TreeNode::leaf(tab));
                 } else {
                     tree[dst].append_tab(tab);
                 }
