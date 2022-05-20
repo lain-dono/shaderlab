@@ -19,7 +19,7 @@ impl bevy::app::Plugin for EditorPlugin {
     fn build(&self, app: &mut bevy::app::App) {
         use bevy::prelude::*;
 
-        app.add_plugin(crate::asset::ScenePlugin)
+        app.add_plugin(crate::scene::ScenePlugin)
             .register_type::<crate::component::ProxyMeta>()
             .register_type::<crate::component::ProxyTransform>()
             .register_type::<crate::component::ProxyPointLight>()

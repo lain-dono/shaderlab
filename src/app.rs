@@ -1,5 +1,5 @@
-use crate::asset::ReflectScene;
 use crate::context::EditorContext;
+use crate::scene::ReflectScene;
 use crate::style::Style;
 use crate::util::anymap::AnyMap;
 use bevy::prelude::*;
@@ -11,7 +11,7 @@ use egui::Rect;
 //pub mod panel;
 pub mod tabs;
 
-pub use self::tabs::{NodeIndex, RenderContext, Split, SplitTree, Tab, TabInner, TreeNode};
+pub use self::tabs::{NodeIndex, Split, SplitTree, Tab, TabInner, TreeNode};
 
 struct TabWidget<'a> {
     label: String,

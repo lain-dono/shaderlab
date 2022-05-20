@@ -16,11 +16,35 @@ impl AnyMap {
     }
 
     #[inline]
-    #[track_caller]
     pub fn insert<R: Any>(&mut self, res: R) -> Option<Box<R>> {
         self.data
             .insert(TypeId::of::<R>(), Box::new(res))
             .map(|r| unsafe { r.downcast::<R>().unwrap_unchecked() })
+    }
+
+    #[inline]
+    pub fn get_or_insert<R: Any>(&mut self, default: impl FnOnce() -> R) -> &mut R {
+        unsafe {
+            self.data
+                .entry(TypeId::of::<R>())
+                .or_insert_with(|| Box::new(default()))
+                .downcast_mut::<R>()
+                .unwrap_unchecked()
+        }
+    }
+
+    #[inline]
+    pub fn get<R: Any>(&self) -> Option<&R> {
+        self.data
+            .get(&TypeId::of::<R>())
+            .map(|r| unsafe { r.downcast_ref::<R>().unwrap_unchecked() })
+    }
+
+    #[inline]
+    pub fn get_mut<R: Any>(&mut self) -> Option<&mut R> {
+        self.data
+            .get_mut(&TypeId::of::<R>())
+            .map(|r| unsafe { r.downcast_mut::<R>().unwrap_unchecked() })
     }
 
     #[inline]
@@ -43,6 +67,7 @@ impl AnyMap {
 pub trait AnyMapQuery<'a> {
     type Result;
 
+    #[track_caller]
     fn query(map: &'a mut AnyMap) -> Self::Result;
 }
 

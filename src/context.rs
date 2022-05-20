@@ -1,4 +1,4 @@
-use crate::asset::{ReflectEntity, ReflectScene};
+use crate::scene::{ReflectEntity, ReflectScene};
 use crate::util::anymap::AnyMap;
 use bevy::prelude::{AssetServer, Children};
 use bevy::reflect::{

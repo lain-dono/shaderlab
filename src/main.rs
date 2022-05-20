@@ -1,50 +1,34 @@
 #![allow(clippy::forget_non_drop)]
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
 
+use crate::scene::{ReflectScene, ReflectSceneSpawner};
 use crate::util::anymap::AnyMap;
-use bevy::core_pipeline::{
-    draw_3d_graph, node, AlphaMask3d, Opaque3d, RenderTargetClearColors, Transparent3d,
-};
+use bevy::core_pipeline::RenderTargetClearColors;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
-use bevy::render::{
-    camera::{ActiveCamera, Camera, CameraTypePlugin, RenderTarget},
-    render_graph::{
-        Node, NodeRunError, RenderGraph, RenderGraphContext, RenderGraphError, SlotValue,
-    },
-    render_phase::RenderPhase,
-    render_resource::{
-        Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-    },
-    {renderer::RenderContext, view::RenderLayers, RenderApp, RenderStage},
-};
+use bevy::reflect::TypeRegistryArc;
+use bevy::render::{camera::RenderTarget, render_graph::RenderGraph, RenderApp};
 use bevy::window::{PresentMode, WindowId};
 use bevy::winit::{UpdateMode, WinitSettings};
 
 mod app;
-mod asset;
 mod component;
 mod context;
 mod field;
-mod global;
 mod icon;
 mod panel;
+mod scene;
 mod shell;
 mod style;
 mod util;
-
-#[derive(Component, Default)]
-pub struct FirstPassCamera;
-
-// The name of the final node of the first pass.
-pub const FIRST_PASS_DRIVER: &str = "first_pass_driver";
 
 fn main() {
     crate::util::enable_tracing();
 
     let mut app = App::new();
     app.insert_resource(ClearColor(Color::CRIMSON))
-        .insert_resource(Msaa { samples: 4 })
+        .insert_resource(Msaa { samples: 1 })
         .insert_resource(WindowDescriptor {
             title: String::from("ShaderLab"),
             //mode: WindowMode::Fullscreen,
@@ -55,7 +39,7 @@ fn main() {
         .add_plugins_with(DefaultPlugins, |group| group.disable::<LogPlugin>())
         .add_plugin(crate::component::EditorPlugin)
         .add_plugin(shell::EguiPlugin)
-        .add_plugin(CameraTypePlugin::<FirstPassCamera>::default())
+        .add_plugin(scene::GizmoPlugin)
         // Optimal power saving and present mode settings for desktop apps.
         .insert_resource(WinitSettings {
             return_from_run: true,
@@ -68,246 +52,207 @@ fn main() {
             },
         })
         .add_startup_system(setup)
-        .add_startup_system(crate::global::setup)
-        .add_system(crate::app::ui_root)
-        .insert_resource(crate::panel::scene::SceneRenderTarget(None))
-        .add_system(crate::panel::scene::update_scene_render_target.after(crate::app::ui_root))
-        .add_system(cube_rotator_system)
-        .add_system(rotator_system);
+        .add_system(crate::app::ui_root);
 
-    init_graph(app.sub_app_mut(RenderApp)).unwrap();
+    {
+        let render_app = app.sub_app_mut(RenderApp);
+        let mut graph = render_app.world.resource_mut::<RenderGraph>();
+
+        // add egui nodes
+        shell::setup_pipeline(&mut graph, WindowId::primary(), "ui_root");
+    }
 
     app.run();
 }
 
-fn init_graph(render_app: &mut App) -> Result<(), RenderGraphError> {
-    // This will add 3D render phases for the new camera.
-    render_app.add_system_to_stage(RenderStage::Extract, extract_first_pass_camera_phases);
-
-    let driver = FirstPassCameraDriver::new(&mut render_app.world);
-    let mut graph = render_app.world.resource_mut::<RenderGraph>();
-
-    // add egui nodes
-    shell::setup_pipeline(&mut graph, WindowId::primary(), "ui_root");
-
-    // Add a node for the first pass.
-    graph.add_node(FIRST_PASS_DRIVER, driver);
-
-    // The first pass's dependencies include those of the main pass.
-    graph.add_node_edge(node::MAIN_PASS_DEPENDENCIES, FIRST_PASS_DRIVER)?;
-
-    // Insert the first pass node: CLEAR_PASS_DRIVER -> FIRST_PASS_DRIVER -> MAIN_PASS_DRIVER
-    graph.add_node_edge(node::CLEAR_PASS_DRIVER, FIRST_PASS_DRIVER)?;
-    graph.add_node_edge(FIRST_PASS_DRIVER, node::MAIN_PASS_DRIVER)?;
-
-    Ok(())
-}
-
-// Add 3D render phases for FIRST_PASS_CAMERA.
-fn extract_first_pass_camera_phases(
-    mut commands: Commands,
-    active: Res<ActiveCamera<FirstPassCamera>>,
-) {
-    if let Some(entity) = active.get() {
-        commands.get_or_spawn(entity).insert_bundle((
-            RenderPhase::<Opaque3d>::default(),
-            RenderPhase::<AlphaMask3d>::default(),
-            RenderPhase::<Transparent3d>::default(),
-        ));
-    }
-}
-
-// A node for the first pass camera that runs draw_3d_graph with this camera.
-struct FirstPassCameraDriver {
-    query: QueryState<Entity, With<FirstPassCamera>>,
-}
-
-impl FirstPassCameraDriver {
-    pub fn new(render_world: &mut World) -> Self {
-        Self {
-            query: QueryState::new(render_world),
-        }
-    }
-}
-
-impl Node for FirstPassCameraDriver {
-    fn update(&mut self, world: &mut World) {
-        self.query.update_archetypes(world);
-    }
-
-    fn run(
-        &self,
-        graph: &mut RenderGraphContext,
-        _render_context: &mut RenderContext,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        for camera in self.query.iter_manual(world) {
-            graph.run_sub_graph(draw_3d_graph::NAME, vec![SlotValue::Entity(camera)])?;
-        }
-        Ok(())
-    }
-}
-
-// Marks the first pass cube (rendered to a texture.)
-#[derive(Component)]
-struct FirstPassCube;
-
-// Marks the main pass cube, to which the texture is applied.
-#[derive(Component)]
-struct MainPassCube;
-
 fn setup(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut clear_colors: ResMut<RenderTargetClearColors>,
+    mut context: ResMut<crate::shell::EguiContext>,
+    mut spawner: ResMut<ReflectSceneSpawner>,
+    mut scenes: ResMut<Assets<ReflectScene>>,
+    type_registry: Res<TypeRegistryArc>,
 ) {
-    let (first_pass_layer, image_handle) = {
-        let size = Extent3d {
-            width: 32,
-            height: 32,
-            ..default()
-        };
-
-        // This is the texture that will be rendered to.
-        let mut image = Image {
-            texture_descriptor: TextureDescriptor {
-                label: None,
-                size,
-                dimension: TextureDimension::D2,
-                format: TextureFormat::Bgra8UnormSrgb,
-                mip_level_count: 1,
-                sample_count: 1,
-                usage: TextureUsages::TEXTURE_BINDING
-                    | TextureUsages::COPY_DST
-                    | TextureUsages::RENDER_ATTACHMENT,
-            },
-            ..default()
-        };
-
-        // fill image.data with zeroes
-        image.resize(size);
-
-        let image_handle = images.add(image);
-
-        // This specifies the layer used for the first pass, which will be attached to the first pass camera and cube.
-        let first_pass_layer = RenderLayers::layer(1);
-
-        // First pass camera
-        let render_target = RenderTarget::Image(image_handle.clone());
-        clear_colors.insert(render_target.clone(), Color::WHITE);
-
-        commands
-            .spawn_bundle(PerspectiveCameraBundle::<FirstPassCamera> {
-                camera: Camera {
-                    target: render_target,
-                    ..default()
-                },
-                transform: Transform::from_translation(Vec3::new(0.0, 0.0, 15.0))
-                    .looking_at(Vec3::default(), Vec3::Y),
-                ..PerspectiveCameraBundle::new()
-            })
-            .insert(first_pass_layer);
-
-        // NOTE: omitting the RenderLayers component for this camera may cause a validation error:
-        //
-        // thread 'main' panicked at 'wgpu error: Validation Error
-        //
-        //    Caused by:
-        //        In a RenderPass
-        //          note: encoder = `<CommandBuffer-(0, 1, Metal)>`
-        //        In a pass parameter
-        //          note: command buffer = `<CommandBuffer-(0, 1, Metal)>`
-        //        Attempted to use texture (5, 1, Metal) mips 0..1 layers 0..1 as a combination of COLOR_TARGET within a usage scope.
-        //
-        // This happens because the texture would be written and read in the same frame, which is not allowed.
-        // So either render layers must be used to avoid this, or the texture must be double buffered.
-
-        (first_pass_layer, image_handle)
-    };
-
-    {
-        let mesh = meshes.add(Mesh::from(shape::Cube { size: 4.0 }));
-        let material = materials.add(StandardMaterial {
-            base_color: Color::rgb(0.8, 0.7, 0.6),
-            reflectance: 0.02,
-            unlit: false,
-            ..default()
-        });
-
-        // The cube that will be rendered to the texture.
-        commands
-            .spawn_bundle(PbrBundle {
-                mesh,
-                material,
-                transform: Transform::from_translation(Vec3::new(0.0, 0.0, 1.0)),
-                ..default()
-            })
-            .insert(FirstPassCube)
-            .insert(first_pass_layer);
-    }
-
-    if false {
-        let mesh = meshes.add(Mesh::from(shape::Cube { size: 4.0 }));
-
-        // This material has the texture that has been rendered.
-        let material = materials.add(StandardMaterial {
-            base_color_texture: Some(image_handle),
-            reflectance: 0.02,
-            unlit: false,
-            ..default()
-        });
-
-        // Main pass cube, with material containing the rendered first pass texture.
-        commands
-            .spawn_bundle(PbrBundle {
-                mesh,
-                material,
-                transform: Transform {
-                    translation: Vec3::new(0.0, 0.0, 1.5),
-                    rotation: Quat::from_rotation_x(-std::f32::consts::PI / 5.0),
-                    ..default()
-                },
-                ..default()
-            })
-            .insert(MainPassCube);
-    }
-
     // The main pass camera.
     {
-        let image_handle =
-            crate::panel::scene::SceneRenderTarget::insert(&mut commands, &mut images);
+        let image_handle = crate::scene::SceneRenderTarget::insert(&mut commands, &mut images);
 
         let target = RenderTarget::Image(image_handle);
-        //clear_colors.insert(target.clone(), Color::CRIMSON);
         let gray = 0x2B as f32 / 255.0;
-        clear_colors.insert(target.clone(), Color::rgb(gray, gray, gray));
+        clear_colors.insert(target.clone(), Color::rgba(gray, gray, gray, 1.0));
 
         commands.spawn_bundle(PerspectiveCameraBundle {
             camera: Camera {
                 target,
                 ..default()
             },
-            transform: Transform::from_translation(Vec3::new(0.0, 0.0, 15.0))
-                .looking_at(Vec3::default(), Vec3::Y),
             ..default()
         });
     }
-}
 
-/// Rotates the inner cube (first pass)
-fn rotator_system(time: Res<Time>, mut query: Query<&mut Transform, With<FirstPassCube>>) {
-    for mut transform in query.iter_mut() {
-        transform.rotation *= Quat::from_rotation_x(1.5 * time.delta_seconds());
-        transform.rotation *= Quat::from_rotation_z(1.3 * time.delta_seconds());
+    commands.insert_resource(crate::style::Style::default());
+    commands.insert_resource(init_split_tree());
+
+    let world = exampe_scene();
+    let scene = ReflectScene::from_world(&world, &type_registry);
+    let scene = scenes.add(scene);
+    spawner.spawn(scene.clone());
+    commands.insert_resource(scene);
+
+    {
+        let [ctx] = context.ctx_mut([bevy::window::WindowId::primary()]);
+        ctx.set_fonts(fonts_with_blender());
     }
 }
 
-/// Rotates the outer cube (main pass)
-fn cube_rotator_system(time: Res<Time>, mut query: Query<&mut Transform, With<MainPassCube>>) {
-    for mut transform in query.iter_mut() {
-        transform.rotation *= Quat::from_rotation_x(1.0 * time.delta_seconds());
-        transform.rotation *= Quat::from_rotation_y(0.7 * time.delta_seconds());
+pub struct SelectedEntity(pub Option<Entity>);
+
+pub fn fonts_with_blender() -> egui::FontDefinitions {
+    let font = egui::FontData::from_static(include_bytes!("icon.ttf"));
+
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert("blender".to_owned(), font);
+    fonts.families.insert(
+        egui::FontFamily::Name("blender".into()),
+        vec!["Hack".to_owned(), "blender".into()],
+    );
+    fonts
+        .families
+        .get_mut(&egui::FontFamily::Proportional)
+        .unwrap()
+        .push("blender".to_owned());
+
+    fonts
+        .families
+        .get_mut(&egui::FontFamily::Monospace)
+        .unwrap()
+        .push("blender".to_owned());
+
+    fonts
+}
+
+fn exampe_scene() -> World {
+    use crate::component::{ProxyHandle, ProxyMeta, ProxyPointLight, ProxyTransform};
+    use bevy::ecs::world::EntityMut;
+
+    fn new<'a>(builder: &'a mut WorldChildBuilder, prefix: &str, counter: usize) -> EntityMut<'a> {
+        let icon = match counter % 14 {
+            0 => crate::icon::MESH_CONE,
+            1 => crate::icon::MESH_PLANE,
+            2 => crate::icon::MESH_CYLINDER,
+            3 => crate::icon::MESH_ICOSPHERE,
+            4 => crate::icon::MESH_CAPSULE,
+            5 => crate::icon::MESH_UVSPHERE,
+            6 => crate::icon::MESH_CIRCLE,
+            7 => crate::icon::MESH_MONKEY,
+            8 => crate::icon::MESH_TORUS,
+            9 => crate::icon::MESH_CUBE,
+
+            10 => crate::icon::OUTLINER_OB_CAMERA,
+            11 => crate::icon::OUTLINER_OB_EMPTY,
+            12 => crate::icon::OUTLINER_OB_LIGHT,
+            13 => crate::icon::OUTLINER_OB_SPEAKER,
+
+            _ => unreachable!(),
+        };
+
+        let mut builder = builder.spawn();
+        builder.insert_bundle((
+            ProxyMeta::new(icon, format!("{} #{}", prefix, counter)),
+            ProxyHandle::<Mesh>::new("models/BoxTextured.glb#Mesh0/Primitive0"),
+            ProxyHandle::<StandardMaterial>::new("models/BoxTextured.glb#Material0"),
+        ));
+        builder
     }
+
+    let mut world = World::new();
+    world.insert_resource(SelectedEntity(None));
+
+    world.spawn().insert_bundle((
+        ProxyMeta::new(crate::icon::LIGHT_POINT, "Point Light"),
+        ProxyTransform {
+            translation: Vec3::new(0.0, 0.0, 10.0),
+            ..default()
+        },
+        ProxyPointLight::default(),
+    ));
+
+    let mut counter = 0;
+
+    for _ in 0..2 {
+        let icon = crate::icon::MESH_CUBE;
+        world
+            .spawn()
+            .insert_bundle((
+                ProxyMeta::new(icon, format!("Root #{}", counter)),
+                ProxyTransform {
+                    translation: Vec3::new(
+                        (counter % 2) as f32,
+                        (counter % 3) as f32,
+                        (counter % 4) as f32,
+                    ),
+                    ..default()
+                },
+                ProxyHandle::<Mesh>::new("models/BoxTextured.glb#Mesh0/Primitive0"),
+                ProxyHandle::<StandardMaterial>::new("models/BoxTextured.glb#Material0"),
+            ))
+            .with_children(|builder| {
+                for _ in 0..2 {
+                    counter += 1;
+                    new(builder, "Child", counter)
+                        .insert(ProxyTransform {
+                            translation: Vec3::new(
+                                (counter % 2) as f32,
+                                (counter % 3) as f32,
+                                (counter % 4) as f32,
+                            ),
+                            ..default()
+                        })
+                        .with_children(|builder| {
+                            for _ in 0..2 {
+                                counter += 1;
+                                new(builder, "Sub Child", counter).insert(ProxyTransform {
+                                    translation: Vec3::new(
+                                        (counter % 2) as f32,
+                                        (counter % 3) as f32,
+                                        (counter % 4) as f32,
+                                    ),
+                                    ..default()
+                                });
+                            }
+                        });
+                }
+            });
+        counter += 1;
+    }
+
+    world
+}
+
+fn init_split_tree() -> crate::app::SplitTree {
+    use crate::app::*;
+    use crate::panel::{FileBrowser, Hierarchy, Inspector, PlaceholderTab};
+    use crate::scene::SceneTab;
+
+    type NodeTodo = PlaceholderTab;
+
+    let node_tree = PlaceholderTab::default();
+    let node_tree = Tab::new(icon::NODETREE, "Node Tree", node_tree);
+    let scene = Tab::new(icon::VIEW3D, "Scene", SceneTab::default());
+
+    let hierarchy = Tab::new(icon::OUTLINER, "Hierarchy", Hierarchy::default());
+    let inspector = Tab::new(icon::PROPERTIES, "Inspector", Inspector::default());
+
+    let files = Tab::new(icon::FILEBROWSER, "File Browser", FileBrowser::default());
+    let assets = Tab::new(icon::ASSET_MANAGER, "Asset Manager", NodeTodo::default());
+
+    let root = TreeNode::leaf_with(vec![scene, node_tree]);
+    let mut split_tree = SplitTree::new(root);
+
+    let [a, b] = split_tree.split_tabs(NodeIndex::root(), Split::Left, 0.3, vec![inspector]);
+    let [_, _] = split_tree.split_tabs(a, Split::Below, 0.7, vec![files, assets]);
+    let [_, _] = split_tree.split_tabs(b, Split::Below, 0.5, vec![hierarchy]);
+
+    split_tree
 }

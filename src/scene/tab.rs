@@ -1,11 +1,10 @@
+use super::SceneMapping;
 use crate::app::TabInner;
-use crate::asset::ReflectScene;
-use crate::component::{ProxyPointLight, ProxyTransform};
+use crate::component::ProxyPointLight;
 use crate::context::{EditorContext, ReflectEntityGetters};
 use crate::style::Style;
 use bevy::prelude::*;
 use bevy::render::camera::CameraProjection;
-use bevy::utils::HashMap;
 
 struct Drag {
     delta: egui::Vec2,
@@ -27,88 +26,30 @@ struct InputState {
 }
 
 pub struct SceneTab {
-    texture_id: Option<egui::TextureId>,
-    mapping: HashMap<u32, usize>,
-    transform: HashMap<usize, GlobalTransform>,
+    pub texture_id: Option<egui::TextureId>,
+    pub camera_proj: PerspectiveProjection,
+    pub camera_view: Transform,
 
-    camera_proj: PerspectiveProjection,
-    camera_view: Transform,
+    pub yew: f32,
+    pub pitch: f32,
 }
 
 impl Default for SceneTab {
     fn default() -> Self {
         Self {
             texture_id: None,
-            mapping: HashMap::default(),
-            transform: HashMap::default(),
-
             camera_proj: PerspectiveProjection::default(),
-            camera_view: Transform::from_translation(Vec3::new(0.0, 0.0, 15.0)),
+            camera_view: Transform::from_translation(Vec3::new(0.0, 5.0, 15.0)),
+
+            yew: 0.0,
+            pitch: 0.0,
         }
     }
 }
 
 impl TabInner for SceneTab {
-    fn ui(&mut self, ui: &mut egui::Ui, _style: &Style, mut ctx: EditorContext) {
-        {
-            self.mapping.clear();
-            self.mapping.extend(
-                ctx.scene
-                    .entities
-                    .iter()
-                    .enumerate()
-                    .map(|(index, entity)| (entity.entity, index)),
-            );
-
-            fn recursive_propagate(
-                mapping: &HashMap<u32, usize>,
-                transform_mapping: &mut HashMap<usize, GlobalTransform>,
-                scene: &ReflectScene,
-                parent_index: usize,
-            ) -> Option<()> {
-                let parent = scene.entities.get(parent_index).unwrap();
-                let parent_transform = transform_mapping[&parent_index];
-
-                for child in parent
-                    .children()?
-                    .iter()
-                    .filter_map(|entity| entity.downcast_ref::<Entity>())
-                {
-                    if let Some(&index) = mapping.get(&child.id()) {
-                        if let Some(child) = scene.entities.get(index) {
-                            if let Some(transform) = child.component_read::<ProxyTransform>() {
-                                transform_mapping.insert(
-                                    index,
-                                    parent_transform.mul_transform(transform.to_local()),
-                                );
-                                recursive_propagate(mapping, transform_mapping, scene, index);
-                            }
-                        }
-                    }
-                }
-
-                None
-            }
-
-            self.transform.clear();
-
-            for parent_index in 0..ctx.scene.entities.len() {
-                let parent = ctx.scene.entities.get(parent_index).unwrap();
-                if parent.without::<Parent>() {
-                    if let Some(parent_transform) = parent.component_read::<ProxyTransform>() {
-                        self.transform
-                            .insert(parent_index, parent_transform.to_global());
-
-                        recursive_propagate(
-                            &self.mapping,
-                            &mut self.transform,
-                            ctx.scene,
-                            parent_index,
-                        );
-                    }
-                }
-            }
-        }
+    fn ui(&mut self, ui: &mut egui::Ui, _style: &Style, ctx: EditorContext) {
+        let mapping = ctx.state.get::<SceneMapping>().unwrap();
 
         let scale = ui.ctx().pixels_per_point();
         let size_ui = ui.available_size_before_wrap();
@@ -151,28 +92,28 @@ impl TabInner for SceneTab {
                 state.right = input.key_down(egui::Key::D);
 
                 let mov_speed = 8.0;
-                let pan_speed = 15.0;
-                let rot_speed = 4.0;
+                let pan_speed = 25.0;
+                let rot_speed = 2.0;
 
                 self.camera_proj.update(size_px.x, size_px.y);
 
                 if let Some(drag) = state.drag.take() {
                     let delta = drag.delta / size_px;
+                    let ratio = self.camera_proj.aspect_ratio;
+                    let fov = self.camera_proj.fov;
                     match drag.button {
                         egui::PointerButton::Middle => {
-                            let ratio = self.camera_proj.aspect_ratio;
-                            let fov = self.camera_proj.fov;
                             let pan = delta * egui::Vec2::new(fov * ratio, fov);
                             let right = self.camera_view.rotation * Vec3::X * -pan.x;
                             let up = self.camera_view.rotation * Vec3::Y * pan.y;
                             self.camera_view.translation += (right + up) * pan_speed;
                         }
                         egui::PointerButton::Secondary => {
-                            let delta = -delta * rot_speed;
-                            let x = Quat::from_axis_angle(Vec3::Y, delta.x);
-                            let y = Quat::from_axis_angle(Vec3::X, delta.y);
+                            self.yew += delta.x * fov * ratio * rot_speed;
+                            self.pitch += delta.y * fov * rot_speed;
+
                             self.camera_view.rotation =
-                                (self.camera_view.rotation * (x * y)).normalize();
+                                Quat::from_euler(EulerRot::YXZ, self.yew, self.pitch, 0.0);
                         }
                         _ => (),
                     }
@@ -217,7 +158,7 @@ impl TabInner for SceneTab {
                 ui.set_clip_rect(screen_rect);
                 let painter = ui.painter();
                 for (index, entity) in ctx.scene.entities.iter_mut().enumerate() {
-                    if let Some(transform) = self.transform.get(&index) {
+                    if let Some(transform) = mapping.transform.get(&index) {
                         if let Some((center, _z)) = world_to_screen(transform.translation) {
                             if entity.has::<ProxyPointLight>() {
                                 painter.text(
@@ -277,85 +218,5 @@ impl SceneRenderTarget {
         commands.insert_resource(Self(Some(handle.clone())));
 
         handle
-    }
-}
-
-pub fn update_scene_render_target(
-    mut tree: ResMut<crate::app::SplitTree>,
-    mut egui_context: ResMut<crate::shell::EguiContext>,
-    scene_render_target: Res<SceneRenderTarget>,
-    mut images: ResMut<Assets<Image>>,
-    mut camera: Query<
-        (&mut Transform, &mut PerspectiveProjection),
-        With<bevy::render::camera::Camera3d>,
-    >,
-) {
-    let [ctx] = egui_context.ctx_mut([bevy::window::WindowId::primary()]);
-
-    if let Some(handle) = scene_render_target.0.as_ref() {
-        if let Some(image) = images.get_mut(handle) {
-            if let Some((viewport, tab)) = tree.find_active::<SceneTab>() {
-                let width = viewport.width() * ctx.pixels_per_point();
-                let height = viewport.height() * ctx.pixels_per_point();
-                image.resize(wgpu::Extent3d {
-                    width: width as u32,
-                    height: height as u32,
-                    ..default()
-                });
-
-                tab.texture_id = Some(egui_context.add_image(handle.clone_weak()));
-
-                for (mut transform, mut projection) in camera.iter_mut() {
-                    *transform = tab.camera_view;
-                    *projection = tab.camera_proj.clone();
-                }
-
-                /*
-                let mov_speed = 8.0;
-                let pan_speed = 15.0;
-                let rot_speed = 4.0;
-
-                if let Some(input) = unsafe { state.query::<Option<&mut InputState>>() } {
-                    for (mut transform, projection) in camera.iter_mut() {
-                        if let Some(drag) = input.drag.take() {
-                            let delta = drag.delta / egui::vec2(width, height);
-                            match drag.button {
-                                egui::PointerButton::Middle => {
-                                    let ratio = projection.aspect_ratio;
-                                    let fov = projection.fov;
-                                    let pan = delta * egui::Vec2::new(fov * ratio, fov);
-                                    let right = transform.rotation * Vec3::X * -pan.x;
-                                    let up = transform.rotation * Vec3::Y * pan.y;
-                                    transform.translation += (right + up) * pan_speed;
-                                }
-                                egui::PointerButton::Secondary => {
-                                    let delta = -delta * rot_speed;
-                                    let x = Quat::from_axis_angle(Vec3::Y, delta.x);
-                                    let y = Quat::from_axis_angle(Vec3::X, delta.y);
-                                    transform.rotation = (transform.rotation * (x * y)).normalize();
-                                }
-                                _ => (),
-                            }
-                        }
-
-                        let mut movement = Vec3::ZERO;
-
-                        movement -= Vec3::Z * if input.forward { 1.0 } else { 0.0 };
-                        movement += Vec3::Z * if input.backward { 1.0 } else { 0.0 };
-                        movement -= Vec3::X * if input.left { 1.0 } else { 0.0 };
-                        movement += Vec3::X * if input.right { 1.0 } else { 0.0 };
-
-                        movement = movement.normalize_or_zero();
-                        if input.hover_pos.is_some() {
-                            movement -= Vec3::Z * input.scroll;
-                        }
-
-                        let movement = transform.rotation * movement;
-                        transform.translation += movement * time.delta_seconds() * mov_speed;
-                    }
-                }
-                */
-            }
-        }
     }
 }

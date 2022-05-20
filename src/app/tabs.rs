@@ -2,15 +2,6 @@ use crate::context::EditorContext;
 use crate::style::Style;
 use egui::{Rect, Ui};
 
-pub struct RenderContext<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    pub window: &'a winit::window::Window,
-    pub encoder: &'a mut wgpu::CommandEncoder,
-    pub attachment: wgpu::RenderPassColorAttachment<'a>,
-    pub viewport: Rect,
-}
-
 pub trait TabInner: Send + Sync + downcast_rs::Downcast {
     fn ui(&mut self, _ui: &mut Ui, _style: &Style, _ctx: EditorContext);
 }
@@ -243,11 +234,6 @@ impl SplitTree {
         self.tree.iter_mut()
     }
 
-    fn fix_len_parent(&mut self, parent: NodeIndex) {
-        let new_len = 1 << (parent.level() + 1);
-        self.tree.resize_with(new_len + 1, || TreeNode::None);
-    }
-
     pub fn split_tabs(
         &mut self,
         parent: NodeIndex,
@@ -267,7 +253,12 @@ impl SplitTree {
     ) -> [NodeIndex; 2] {
         let old = self[parent].split(split, fraction);
         assert!(old.is_leaf());
-        self.fix_len_parent(parent);
+
+        {
+            let index = self.tree.iter().rposition(|n| !n.is_none()).unwrap_or(0);
+            let level = NodeIndex(index).level();
+            self.tree.resize_with(1 << (level + 1), || TreeNode::None);
+        }
 
         let index = match split {
             Split::Right | Split::Above => [parent.right(), parent.left()],

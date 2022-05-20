@@ -1,16 +1,15 @@
+use crate::component::ProxyTransform;
 use crate::component::ReflectProxy;
+use crate::context::ReflectEntityGetters;
 use anyhow::Result;
-use bevy::app::prelude::*;
-use bevy::asset::{AddAsset, AssetEvent, AssetLoader, Assets, Handle, LoadContext, LoadedAsset};
+use bevy::asset::{AssetEvent, AssetLoader, Assets, Handle, LoadContext, LoadedAsset};
 use bevy::ecs::{
-    entity::{Entity, EntityMap},
-    event::{Events, ManualEventReader},
+    entity::EntityMap,
+    event::ManualEventReader,
     reflect::{ReflectComponent, ReflectMapEntities},
-    schedule::ExclusiveSystemDescriptorCoercion,
-    system::{Command, IntoExclusiveSystem},
-    world::{FromWorld, Mut, World},
+    system::Command,
 };
-use bevy::hierarchy::{AddChild, Parent};
+use bevy::prelude::*;
 use bevy::utils::{tracing::error, BoxedFuture, HashMap};
 use bevy_reflect::{
     serde::{ReflectDeserializer, ReflectSerializer},
@@ -25,39 +24,59 @@ use thiserror::Error;
 use uuid::Uuid;
 
 #[derive(Default)]
-pub struct ScenePlugin;
-
-impl Plugin for ScenePlugin {
-    fn build(&self, app: &mut App) {
-        app.add_asset::<ReflectScene>()
-            .init_asset_loader::<ReflectSceneLoader>()
-            .init_resource::<ReflectSceneSpawner>()
-            .add_system_to_stage(
-                CoreStage::PreUpdate,
-                scene_spawner_system.exclusive_system().at_end(),
-            );
-    }
+pub struct SceneMapping {
+    pub entity: HashMap<u32, usize>,
+    pub transform: HashMap<usize, GlobalTransform>,
 }
 
-pub fn scene_spawner_system(world: &mut World) {
-    world.resource_scope(|world, mut spawner: Mut<ReflectSceneSpawner>| {
-        let scene_asset_events = world.resource::<Events<AssetEvent<ReflectScene>>>();
+impl SceneMapping {
+    fn update(&mut self, scene: &ReflectScene) {
+        self.entity.clear();
+        self.transform.clear();
 
-        let mut handles = Vec::new();
-        let spawner = &mut *spawner;
-        for event in spawner.event_reader.iter(scene_asset_events) {
-            if let AssetEvent::Modified { handle } = event {
-                if spawner.scenes.contains_key(handle) {
-                    handles.push(handle.clone_weak());
+        self.entity.extend(
+            scene
+                .entities
+                .iter()
+                .enumerate()
+                .map(|(index, entity)| (entity.entity, index)),
+        );
+
+        for parent_index in 0..scene.entities.len() {
+            let parent = scene.entities.get(parent_index).unwrap();
+            if parent.without::<Parent>() {
+                if let Some(parent_transform) = parent.component_read::<ProxyTransform>() {
+                    self.transform
+                        .insert(parent_index, parent_transform.to_global());
+
+                    self.recursive_propagate(scene, parent_index);
+                }
+            }
+        }
+    }
+
+    fn recursive_propagate(&mut self, scene: &ReflectScene, parent_index: usize) -> Option<()> {
+        let parent = scene.entities.get(parent_index).unwrap();
+        let parent_transform = self.transform[&parent_index];
+
+        for child in parent
+            .children()?
+            .iter()
+            .filter_map(|entity| entity.downcast_ref::<Entity>())
+        {
+            if let Some(&index) = self.entity.get(&child.id()) {
+                if let Some(child) = scene.entities.get(index) {
+                    if let Some(transform) = child.component_read::<ProxyTransform>() {
+                        self.transform
+                            .insert(index, parent_transform.mul_transform(transform.to_local()));
+                        self.recursive_propagate(scene, index);
+                    }
                 }
             }
         }
 
-        spawner.despawn_queued(world).unwrap();
-        spawner.spawn_queued(world).unwrap();
-        spawner.update_spawned(world, &handles).unwrap();
-        spawner.set_scene_instance_parent_sync(world);
-    });
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -392,6 +411,10 @@ impl ReflectScene {
                 reflect.map_entities(world, entity_map).unwrap();
             }
         }
+
+        let mut context = world.resource_mut::<crate::util::anymap::AnyMap>();
+        let mapping = context.get_or_insert(SceneMapping::default);
+        mapping.update(self);
 
         Ok(())
     }

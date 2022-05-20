@@ -1,9 +1,9 @@
 use crate::app::TabInner;
 use crate::component::ProxyMeta;
 use crate::context::{EditorContext, ReflectEntityGetters};
+use crate::scene::SceneMapping;
 use crate::style::Style;
 use bevy::prelude::{Entity, Parent};
-use bevy::utils::HashMap;
 use egui::style::Margin;
 use egui::widgets::TextEdit;
 use egui::*;
@@ -12,20 +12,10 @@ use std::borrow::Cow;
 #[derive(Default)]
 pub struct Hierarchy {
     search: String,
-    cache: HashMap<u32, usize>,
 }
 
 impl TabInner for Hierarchy {
     fn ui(&mut self, ui: &mut Ui, style: &Style, mut ctx: EditorContext) {
-        self.cache.clear();
-        self.cache.extend(
-            ctx.scene
-                .entities
-                .iter()
-                .enumerate()
-                .map(|(index, entity)| (entity.entity, index)),
-        );
-
         let rect = ui.available_rect_before_wrap();
         ui.painter().rect_filled(rect, 0.0, style.panel);
 
@@ -48,7 +38,7 @@ impl TabInner for Hierarchy {
                 style.scrollarea(ui);
                 for index in 0..ctx.scene.entities.len() {
                     if ctx.get(index).unwrap().without::<Parent>() {
-                        item_widget(0, index, ui, style, &self.cache, &mut ctx);
+                        item_widget(0, index, ui, style, &mut ctx);
                     }
                 }
             });
@@ -76,15 +66,7 @@ impl State {
     }
 }
 
-fn item_widget(
-    level: usize,
-    entity: usize,
-    ui: &mut Ui,
-
-    style: &Style,
-    cache: &HashMap<u32, usize>,
-    ctx: &mut EditorContext,
-) {
+fn item_widget(level: usize, entity: usize, ui: &mut Ui, style: &Style, ctx: &mut EditorContext) {
     let id = Id::new((entity, "#hierarchy_item"));
     let mut state = State::load(ui.ctx(), id);
     let is_open = state.open;
@@ -198,8 +180,9 @@ fn item_widget(
 
         if is_open {
             for entity in children {
-                let entity = cache[&entity];
-                item_widget(level + 1, entity, ui, style, cache, ctx);
+                let mapping = ctx.state.get::<SceneMapping>().unwrap();
+                let entity = mapping.entity[&entity];
+                item_widget(level + 1, entity, ui, style, ctx);
             }
         }
     }

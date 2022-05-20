@@ -121,25 +121,23 @@ impl Builder {
                 }
 
                 if let Some(value) = reflect.downcast_mut::<Color>() {
-                    match value {
-                        Color::Rgba {
-                            red,
-                            green,
-                            blue,
-                            alpha,
-                        } => {
-                            let mut rgba =
-                                egui::Rgba::from_rgba_premultiplied(*red, *green, *blue, *alpha);
-                            let alpha_mode = egui::widgets::color_picker::Alpha::Opaque;
-                            egui::widgets::color_picker::color_edit_button_rgba(
-                                ui, &mut rgba, alpha_mode,
-                            );
-                            *red = rgba.r();
-                            *green = rgba.g();
-                            *blue = rgba.b();
-                            *alpha = rgba.a();
-                        }
-                        _ => (),
+                    if let Color::Rgba {
+                        red,
+                        green,
+                        blue,
+                        alpha,
+                    } = value
+                    {
+                        let mut rgba =
+                            egui::Rgba::from_rgba_premultiplied(*red, *green, *blue, *alpha);
+                        let alpha_mode = egui::widgets::color_picker::Alpha::Opaque;
+                        egui::widgets::color_picker::color_edit_button_rgba(
+                            ui, &mut rgba, alpha_mode,
+                        );
+                        *red = rgba.r();
+                        *green = rgba.g();
+                        *blue = rgba.b();
+                        *alpha = rgba.a();
                     }
 
                     return;
