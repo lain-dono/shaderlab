@@ -1,4 +1,5 @@
 # shaderlab
+shaderlab is a scene editor or something. It uses [EGUI](https://github.com/emilk/egui) and [WGPU](https://github.com/gfx-rs/wgpu)
 
 ## Installation
 [RustUp](https://www.rust-lang.org/tools/install) will install Rust, there may be a better installer depending on your operating system.
