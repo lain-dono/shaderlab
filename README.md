@@ -22,6 +22,10 @@ ALSA developer library
 libudev
 `sudo swupd bundle-add devpkg-libgudev`
 
+### [OpenSUSE]
+incomplete list
+`sudo zypper install libudev-devel alsa-lib-devel`
+
 ## Running
 
 `cargo run`
