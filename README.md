@@ -14,14 +14,13 @@ incomplete list
 
 ### [Clear Linux OS](https://clearlinux.org/)
 
-Rust
-`sudo swupd bundle-add rust-basic`
+Rust, ALSA developer library, libudev
 
-ALSA developer library
-`sudo swupd bundle-add devpkg-alsa-lib`
-
-libudev
-`sudo swupd bundle-add devpkg-libgudev`
+```
+sudo swupd bundle-add rust-basic
+sudo swupd bundle-add devpkg-alsa-lib
+sudo swupd bundle-add devpkg-libgudev
+```
 
 ### [OpenSUSE](https://www.opensuse.org/)
 incomplete list
