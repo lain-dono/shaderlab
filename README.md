@@ -16,8 +16,7 @@ incomplete list
 
 Rust, ALSA developer library, libudev
 
-```
-sudo swupd bundle-add rust-basic
+```bash
 sudo swupd bundle-add devpkg-alsa-lib
 sudo swupd bundle-add devpkg-libgudev
 ```
