@@ -242,13 +242,24 @@ impl Node for EguiNode {
 
         let mut index_offset = 0;
 
-        for egui::ClippedMesh(rect, mesh) in &jobs {
+        for egui::ClippedPrimitive {
+            clip_rect,
+            primitive,
+        } in &jobs
+        {
+            let mesh = match primitive {
+                egui::epaint::Primitive::Mesh(mesh) => mesh,
+                egui::epaint::Primitive::Callback(_) => {
+                    unimplemented!("Paint callbacks aren't supported")
+                }
+            };
+
             let (pw, ph) = (
                 window_size.physical_width as u32,
                 window_size.physical_height as u32,
             );
 
-            let scissor = match Scissor::new(rect, scale_factor).validate(pw, ph) {
+            let scissor = match Scissor::new(clip_rect, scale_factor).validate(pw, ph) {
                 Some(scissor) => scissor,
                 None => continue,
             };
@@ -372,11 +383,11 @@ impl Node for EguiNode {
 pub fn as_color_image(image: egui::ImageData) -> egui::ColorImage {
     match image {
         egui::ImageData::Color(image) => image,
-        egui::ImageData::Alpha(image) => alpha_image_as_color_image(&image),
+        egui::ImageData::Font(image) => alpha_image_as_color_image(&image),
     }
 }
 
-pub fn alpha_image_as_color_image(image: &egui::AlphaImage) -> egui::ColorImage {
+pub fn alpha_image_as_color_image(image: &egui::FontImage) -> egui::ColorImage {
     let gamma = 1.0;
     egui::ColorImage {
         size: image.size,

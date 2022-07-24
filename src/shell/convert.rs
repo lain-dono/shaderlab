@@ -26,6 +26,16 @@ pub fn cursor_icon(cursor_icon: egui::CursorIcon) -> Option<winit::window::Curso
         egui::CursorIcon::AllScroll => Some(winit::window::CursorIcon::AllScroll),
         egui::CursorIcon::ZoomIn => Some(winit::window::CursorIcon::ZoomIn),
         egui::CursorIcon::ZoomOut => Some(winit::window::CursorIcon::ZoomOut),
+        egui::CursorIcon::ResizeEast => Some(winit::window::CursorIcon::EResize),
+        egui::CursorIcon::ResizeSouthEast => Some(winit::window::CursorIcon::SeResize),
+        egui::CursorIcon::ResizeSouth => Some(winit::window::CursorIcon::SResize),
+        egui::CursorIcon::ResizeSouthWest => Some(winit::window::CursorIcon::SwResize),
+        egui::CursorIcon::ResizeWest => Some(winit::window::CursorIcon::WResize),
+        egui::CursorIcon::ResizeNorthWest => Some(winit::window::CursorIcon::NwResize),
+        egui::CursorIcon::ResizeNorth => Some(winit::window::CursorIcon::NResize),
+        egui::CursorIcon::ResizeNorthEast => Some(winit::window::CursorIcon::NeResize),
+        egui::CursorIcon::ResizeColumn => Some(winit::window::CursorIcon::ColResize),
+        egui::CursorIcon::ResizeRow => Some(winit::window::CursorIcon::RowResize),
         egui::CursorIcon::None => None,
     }
 }

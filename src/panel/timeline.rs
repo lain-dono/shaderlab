@@ -5,6 +5,10 @@ use crate::style::Style;
 //use bevy::reflect::{FromType, Reflect, TypeRegistry};
 use egui::*;
 
+pub mod runtime;
+
+use self::runtime::{Animaton, BoneFrame, Curve, Key, LocationKey, RotationKey, ScaleKey};
+
 const LINE_HEIGHT: f32 = 20.0;
 const HEADER_HEIGHT: f32 = 24.0;
 
@@ -215,14 +219,10 @@ impl TabInner for Timeline {
     }
 }
 
-struct BoneFrame {
-    label: String,
-    open: bool,
-
-    keys: Vec<u32>,
-    location: Vec<LocationKey>,
-    rotation: Vec<RotationKey>,
-    scale: Vec<ScaleKey>,
+impl<T> Key<T> {
+    fn position(&self) -> f32 {
+        ROW_WIDTH * self.time as f32
+    }
 }
 
 impl BoneFrame {
@@ -498,46 +498,4 @@ fn draw_bar(ui: &mut Ui, rect: Rect, color: Color32) {
     let sx = rect.width() / 2.0 - 0.5 - px;
     let bar_rect = rect.shrink2(vec2(sx, 0.0));
     ui.painter().rect_filled(bar_rect, 0.0, color);
-}
-
-#[derive(Clone, Copy)]
-pub enum Curve {
-    Linear,
-    Spline,
-}
-
-pub struct Animaton {
-    pub name: String,
-}
-
-pub struct Key<T> {
-    pub time: u32,
-    pub curve: Curve,
-    pub data: T,
-}
-
-impl<T> Key<T> {
-    fn position(&self) -> f32 {
-        ROW_WIDTH * self.time as f32
-    }
-}
-
-pub type LocationKey = Key<[f32; 2]>;
-pub type RotationKey = Key<f32>;
-pub type ScaleKey = Key<[f32; 2]>;
-
-pub struct BoneState {
-    pub location: [f32; 2],
-    pub rotation: f32,
-    pub scale: [f32; 2],
-}
-
-impl Default for BoneState {
-    fn default() -> Self {
-        Self {
-            location: [0.0; 2],
-            rotation: 0.0,
-            scale: [1.0; 2],
-        }
-    }
 }
