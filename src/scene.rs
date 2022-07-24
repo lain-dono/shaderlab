@@ -11,8 +11,8 @@ pub use self::{
     tab::{SceneRenderTarget, SceneTab},
 };
 
-use bevy::ecs::event::Events;
 use bevy::prelude::*;
+use bevy::{ecs::event::Events, render::camera::Projection};
 
 #[derive(Default)]
 pub struct ScenePlugin;
@@ -57,10 +57,7 @@ pub fn update_scene_render_target(
     mut egui_context: ResMut<crate::shell::EguiContext>,
     scene_render_target: Res<SceneRenderTarget>,
     mut images: ResMut<Assets<Image>>,
-    mut camera: Query<
-        (&mut Transform, &mut PerspectiveProjection),
-        With<bevy::render::camera::Camera>,
-    >,
+    mut camera: Query<(&mut Transform, &mut Projection), With<bevy::render::camera::Camera>>,
 ) {
     let [ctx] = egui_context.ctx_mut([bevy::window::WindowId::primary()]);
 
@@ -80,7 +77,7 @@ pub fn update_scene_render_target(
 
                 for (mut transform, mut projection) in camera.iter_mut() {
                     *transform = tab.camera_view;
-                    *projection = tab.camera_proj.clone();
+                    *projection = Projection::Perspective(tab.camera_proj.clone());
                 }
             }
         }

@@ -318,7 +318,16 @@ impl Node for EguiNode {
 
         let transforms = world.get_resource::<EguiTransforms>().unwrap();
 
-        let window = &world.get_resource::<ExtractedWindows>().unwrap().windows[&self.window_id];
+        let window = match world
+            .get_resource::<ExtractedWindows>()
+            .unwrap()
+            .windows
+            .get(&self.window_id)
+        {
+            Some(window) => window,
+            None => return Ok(()),
+        };
+
         let view = window.swap_chain_texture.as_ref().unwrap();
 
         let desc = RenderPassDescriptor {

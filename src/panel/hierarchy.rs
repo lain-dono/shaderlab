@@ -24,7 +24,7 @@ impl TabInner for Hierarchy {
             style.theme(ui);
 
             ui.horizontal(|ui| {
-                let frame = Frame::none().margin(Margin::symmetric(3.0, 3.0));
+                let frame = Frame::none().inner_margin(Margin::symmetric(3.0, 3.0));
                 frame.fill(style.tab_base).show(ui, |ui| {
                     let text = TextEdit::singleline(&mut self.search);
                     ui.add(text.desired_width(f32::INFINITY));

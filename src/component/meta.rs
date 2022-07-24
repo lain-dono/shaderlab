@@ -33,7 +33,7 @@ impl Proxy for ProxyMeta {
     fn insert(self, world: &mut World, entity: Entity) {
         let mut v = ComputedVisibility::not_visible();
         v.set_visible_in_view();
-        //v.set_visible_in_hierarchy();
+
         world.entity_mut(entity).insert_bundle((
             Name::new(self.name),
             Visibility {
@@ -49,7 +49,7 @@ impl ComponentEditor for ProxyMeta {
         let data = component.downcast_mut::<DynamicStruct>().unwrap();
 
         ui.horizontal(|ui| {
-            let frame = Frame::none().margin(style::Margin::symmetric(2.0, 3.0));
+            let frame = Frame::none().inner_margin(style::Margin::symmetric(2.0, 3.0));
             frame.fill(style.tab_base).show(ui, |ui| {
                 /*
                 if false {

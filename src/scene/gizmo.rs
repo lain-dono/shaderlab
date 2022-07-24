@@ -1,5 +1,5 @@
 use bevy::{
-    ecs::{query, system::lifetimeless::Read},
+    ecs::system::lifetimeless::Read,
     prelude::*,
     render::{
         render_graph::{
@@ -9,10 +9,7 @@ use bevy::{
         render_resource::{BindGroup, BindGroupLayout, Buffer, RenderPipeline, ShaderType},
         renderer::{RenderContext, RenderDevice, RenderQueue},
         texture::BevyDefault,
-        view::{
-            ExtractedView, ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset,
-            ViewUniforms,
-        },
+        view::{ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
         RenderApp,
     },
 };
@@ -33,33 +30,7 @@ fn init_rendering(render_app: &mut App) -> Result<(), RenderGraphError> {
     render_app.init_resource::<Lines>();
     render_app.init_resource::<LinesPipeline>();
 
-    /* */
-    // This will add 3D render phases for the new camera.
-    //render_app.add_system_to_stage(RenderStage::Extract, extract_gizmo_camera_phases);
-
     let node = GizmoCameraDriver::from_world(&mut render_app.world);
-
-    /*
-    let mut graph = render_app.world.resource_mut::<RenderGraph>();
-    graph.add_node(GIZMO_DRIVER, driver);
-
-    // CLEAR_PASS_DRIVER -> GIZMO_DRIVER -> MAIN_PASS_DRIVER
-    //graph.add_node_edge(node::MAIN_PASS_DEPENDENCIES, GIZMO_DRIVER)?;
-    //graph.add_node_edge(node::CLEAR_PASS_DRIVER, GIZMO_DRIVER)?;
-    //graph.add_node_edge(GIZMO_DRIVER, node::MAIN_PASS_DRIVER)?;
-
-    //graph.add_node_edge(GIZMO_DRIVER, node::MAIN_PASS_DEPENDENCIES)?;
-    //graph.add_node_edge(GIZMO_DRIVER, node::MAIN_PASS_DRIVER)?;
-
-    //graph.add_node_edge(node::CLEAR_PASS_DRIVER, GIZMO_DRIVER)?;
-    //graph.add_node_edge(node::MAIN_PASS_DRIVER, GIZMO_DRIVER)?;
-
-    graph.add_node_edge(
-        bevy::core_pipeline::core_3d::graph::node::MAIN_PASS,
-        GIZMO_DRIVER,
-    )?;
-     */
-
     let mut graph = render_app.world.resource_mut::<RenderGraph>();
 
     let draw_3d_graph = graph
@@ -183,8 +154,6 @@ impl Node for GizmoCameraDriver {
 
         if let Some(view_bind_group) = self.view_bind.as_ref() {
             for (target, depth, offset) in self.camera.iter_manual(world) {
-                //graph.run_sub_graph(draw_3d_graph::NAME, vec![SlotValue::Entity(camera)])?;
-
                 let desc = wgpu::RenderPassDescriptor {
                     label: Some("lines render pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
