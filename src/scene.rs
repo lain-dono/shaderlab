@@ -67,11 +67,12 @@ pub fn update_scene_render_target(
     if let Some(handle) = scene_render_target.0.as_ref() {
         if let Some(image) = images.get_mut(handle) {
             if let Some((viewport, tab)) = tree.find_active::<SceneTab>() {
-                let width = viewport.width() * ctx.pixels_per_point();
-                let height = viewport.height() * ctx.pixels_per_point();
+                let width = (viewport.width() * ctx.pixels_per_point()) as u32;
+                let height = (viewport.height() * ctx.pixels_per_point()) as u32;
+
                 image.resize(wgpu::Extent3d {
-                    width: width as u32,
-                    height: height as u32,
+                    width: width.max(1),
+                    height: height.max(1),
                     ..default()
                 });
 

@@ -5,8 +5,6 @@ struct View {
     projection: mat4x4<f32>;
     world_position: vec3<f32>;
 
-    near: f32;
-    far: f32;
     width: f32;
     height: f32;
 };
@@ -85,179 +83,13 @@ struct GridOutput {
     [[location(2)]] uv: vec2<f32>;
 };
 
-    fn unproject_point(x: f32, y: f32, z: f32, view_inv: mat4x4<f32>, proj_inv: mat4x4<f32>) -> vec3<f32> {
-        //let unprojected = view_inv * proj_inv * vec4<f32>(x, y, z, 1.0);
-        let unprojected = inverse4x4(view.view_proj) * vec4<f32>(x, y, z, 1.0);
-        return unprojected.xyz / unprojected.w;
-    }
-
-
-    fn checkerboard(r: vec2<f32>, scale: f32) -> f32 {
-        return f32((i32(floor(r.x / scale)) + i32(floor(r.y / scale))) % 2);
-    }
-
-
-
-    // https://www.shadertoy.com/view/XtBfzz
-
-    // --- analytically box-filtered grid ---
+fn unproject_point(x: f32, y: f32, z: f32) -> vec3<f32> {
+    let unprojected = inverse4x4(view.view_proj) * vec4<f32>(x, y, z, 1.0);
+    return unprojected.xyz / unprojected.w;
+}
 
 fn resolution() -> vec2<f32> {
     return vec2<f32>(view.width, view.height);
-}
-
-    let N: f32 = 500.0; // grid ratio
-
-    fn gridTextureGradBox(p: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> f32 {
-        // filter kernel
-        let w = max(abs(ddx), abs(ddy)) + 0.01;
-
-        // analytic (box) filtering
-        let a = p + 0.5*w;
-        let b = p - 0.5*w;
-        let i = (floor(a) + min(fract(a) * N, vec2<f32>(1.0)) - floor(b) - min(fract(b) * N, vec2<f32>(1.0))) / (N * w);
-
-        // pattern
-        return (1.0 - i.x) * (1.0 - i.y);
-    }
-
-
-    struct Intersect {
-        pos: vec3<f32>;
-        nor: vec3<f32>;
-        matid: i32;
-        tmin: f32;
-    };
-
-    struct Ray {
-        ro: vec3<f32>;
-        rd: vec3<f32>;
-    };
-
-    fn intersect(ray: Ray) -> Intersect {
-        // raytrace
-        var out: Intersect;
-
-        out.tmin = 10000.0;
-        out.nor = vec3<f32>(0.0);
-        out.pos = vec3<f32>(0.0);
-        out.matid = -1;
-
-        // raytrace-plane
-        let h = (0.01-ray.ro.y) / ray.rd.y;
-        if (h > 0.0) {
-            out.tmin = h;
-            out.nor = vec3<f32>(0.0, 1.0, 0.0);
-            out.pos = ray.ro + h * ray.rd;
-            out.matid = 0;
-        }
-
-        return out;
-    }
-
-    fn texCoords(pos: vec3<f32>, mid: i32) -> vec2<f32> {
-        return 10.0 * pos.xz;
-    }
-
-    struct Camera {
-        ro: vec3<f32>;
-        ta: vec3<f32>;
-    };
-
-    fn calcCamera() -> Camera {
-        let an = 0.1 * sin(0.2);
-        return Camera(
-            vec3<f32>( 5.0*cos(an), 0.5, 5.0*sin(an) ),
-            vec3<f32>( 0.0, 1.0, 0.0 ),
-        );
-    }
-
-    //===============================================================================================
-    //===============================================================================================
-    // render
-    //===============================================================================================
-    //===============================================================================================
-
-
-    fn calcRayForPixel(pix: vec2<f32>) -> Ray {
-        let p = (2.0*pix-resolution().xy) / resolution().y;
-
-        // camera movement
-        let camera = calcCamera();
-
-        // camera matrix
-        let ww = normalize(camera.ta - camera.ro);
-        let uu = normalize(cross(ww, vec3<f32>(0.0,1.0,0.0)));
-        let vv = normalize(cross(uu, ww));
-
-        // create view ray
-        let rd = normalize(p.x * uu + p.y * vv + 2.0 * ww);
-
-        return Ray(camera.ro, rd);
-    }
-
-    fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
-        let p = (-resolution().xy + 2.0 * fragCoord) / resolution().y;
-
-        let ray = calcRayForPixel(fragCoord + vec2<f32>(0.0, 0.0));
-        let ddx = calcRayForPixel(fragCoord + vec2<f32>(1.0, 0.0));
-        let ddy = calcRayForPixel(fragCoord + vec2<f32>(0.0, 1.0));
-
-        let trace = intersect(ray);
-
-        var col = vec3<f32>(0.0, 0.0, 0.0);
-        var alpha = 0.0;
-        if (trace.matid != -1) {
-            // -----------------------------------------------------------------------
-            // compute ray differentials by intersecting the tangent plane to the surface.
-            // -----------------------------------------------------------------------
-
-            // computer ray differentials
-            let ddx_pos = ddx.ro - ddx.rd * dot(ddx.ro - trace.pos, trace.nor) / dot(ddx.rd, trace.nor);
-            let ddy_pos = ddy.ro - ddy.rd * dot(ddy.ro - trace.pos, trace.nor) / dot(ddy.rd, trace.nor);
-
-            // calc texture sampling footprint
-            let     uv = texCoords(trace.pos, trace.matid);
-            let ddx_uv = texCoords(ddx_pos, trace.matid) - uv;
-            let ddy_uv = texCoords(ddy_pos, trace.matid) - uv;
-
-            // shading
-            let grid = gridTextureGradBox(uv, ddx_uv, ddy_uv);
-            let mate = vec3<f32>(1.0, 1.0, 1.0) * (1.0 - grid);
-            col = mate;
-
-            // fog
-            //let t = trace.tmin;
-            //col = mix( col, vec3<f32>(0.9), 1.0 - exp(-0.00001*t*t) );
-
-            //alpha = (1.0 - grid);
-            alpha = (1.0 - grid);
-        }
-
-        // gamma correction
-        //col = pow(col, vec3<f32>(0.4545));
-
-        return vec4<f32>(col, alpha);
-    }
-
-fn to_finite(
-    proj: mat4x4<f32>,
-    z_near: f32,
-    z_far: f32,
-) -> mat4x4<f32> {
-    let nmf = z_near - z_far;
-
-    return mat4x4<f32>(
-        proj[0],
-        proj[1],
-        //proj[2],
-        //proj[3],
-        //vec4<f32>(0.0, 0.0, -z_far / nmf - 1.0, -1.0),
-        //vec4<f32>(0.0, 0.0, -z_near * z_far / nmf, 0.0),
-
-        vec4<f32>(0.0, 0.0, 0.0, -1.0),
-        vec4<f32>(0.0, 0.0, z_near, 0.0),
-    );
 }
 
 [[stage(vertex)]]
@@ -267,17 +99,10 @@ fn vs_main_grid([[builtin(vertex_index)]] in_vertex_index: u32) -> GridOutput {
     let u = u - 1.0;
     let v = 1.0 - v;
 
-    //let view_inv = inverse4x4(view.view);
-    let view_inv = view.view;
-    //let proj_inv = inverse4x4(to_finite(view.projection, view.near, view.far));
-    let proj_inv = to_finite(view.projection, view.near, view.far);
-    //let proj_inv = view.projection;
-
     return GridOutput(
         vec4<f32>(u, v, 0.0, 1.0),
-        unproject_point(u, v, 1.000, view_inv, proj_inv),
-        unproject_point(u, v, 0.0000001, view_inv, proj_inv),
-        //unproject_point(u, v, 0.00000, view_inv, proj_inv),
+        unproject_point(u, v, 1.000),
+        unproject_point(u, v, 0.0000001),
         vec2<f32>(u, v),
     );
 }
@@ -312,26 +137,10 @@ fn grid(pos: vec3<f32>, scale: f32, axis: bool) -> vec4<f32> {
     return color;
 }
 
-fn computeDepth(pos: vec3<f32>) -> f32 {
-    let clip_space_pos = view.view_proj * vec4<f32>(pos.xyz, 1.0);
-    return (clip_space_pos.z / clip_space_pos.w);
-}
-
-fn computeLinearDepth(pos: vec3<f32>) -> f32 {
-    let clip_space_pos = view.view_proj * vec4<f32>(pos.xyz, 1.0);
-    let clip_space_depth = (clip_space_pos.z / clip_space_pos.w); // put back between -1 and 1
-    return clip_space_depth; // normalize
-}
-
 struct FragOut {
     [[builtin(frag_depth)]] depth: f32;
     [[location(0)]] color: vec4<f32>;
 };
-
-fn remap(value: f32, in: vec2<f32>, out: vec2<f32>) -> f32 {
-    return out.x + (value - in.x) * (out.y - out.x) / (in.y - in.x);
-}
-
 
 [[stage(fragment)]]
 fn fs_main_grid(in: GridOutput) -> FragOut {
@@ -340,8 +149,9 @@ fn fs_main_grid(in: GridOutput) -> FragOut {
 
     let near = 0.0005;
     let clip = view.view_proj * vec4<f32>(pos.xyz, 1.0);
-    let fading = 1.0 - near / (clip.z / clip.w);
+    let depth = clip.z / clip.w;
+    let fading = 1.0 - near / depth;
 
     let color = (grid(pos, 1.0, false) + grid(pos, 0.1, true)) * f32(t > 0.0);
-    return FragOut(computeDepth(pos), color * fading);
+    return FragOut(depth, color * fading);
 }

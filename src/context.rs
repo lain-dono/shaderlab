@@ -17,6 +17,7 @@ pub struct EditorContext<'a> {
 
 impl<'a> EditorContext<'a> {
     pub fn select(&mut self, entity: usize) {
+        bevy::log::info!("select entity: {}", entity);
         self.state.insert(SelectedEntityId(entity));
     }
 

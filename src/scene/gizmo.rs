@@ -1,24 +1,19 @@
 use bevy::{
-    core_pipeline::{draw_3d_graph, node, AlphaMask3d, Opaque3d, Transparent3d},
+    core_pipeline::node,
     ecs::query,
     prelude::*,
     render::{
-        camera::{ActiveCamera, Camera, Camera3d, CameraTypePlugin, ExtractedCamera, RenderTarget},
-        render_asset::RenderAssets,
-        render_graph::{
-            Node, NodeRunError, RenderGraph, RenderGraphContext, RenderGraphError, SlotValue,
-        },
-        render_phase::RenderPhase,
+        camera::Camera3d,
+        render_graph::{Node, NodeRunError, RenderGraph, RenderGraphContext, RenderGraphError},
         render_resource::{std140::AsStd140, BindGroup, BindGroupLayout, Buffer, RenderPipeline},
         renderer::{RenderContext, RenderDevice, RenderQueue},
         texture::BevyDefault,
         view::{
-            ExtractedView, ExtractedWindows, RenderLayers, ViewDepthTexture, ViewTarget,
-            ViewUniform, ViewUniformOffset, ViewUniforms,
+            ExtractedView, ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset,
+            ViewUniforms,
         },
-        RenderApp, RenderStage,
+        RenderApp,
     },
-    window::WindowId,
 };
 
 // The name of the final node of the first pass.
@@ -34,6 +29,9 @@ impl Plugin for GizmoPlugin {
 }
 
 fn init_rendering(render_app: &mut App) -> Result<(), RenderGraphError> {
+    render_app.init_resource::<Lines>();
+    render_app.init_resource::<LinesPipeline>();
+
     // This will add 3D render phases for the new camera.
     //render_app.add_system_to_stage(RenderStage::Extract, extract_gizmo_camera_phases);
 
@@ -49,6 +47,7 @@ fn init_rendering(render_app: &mut App) -> Result<(), RenderGraphError> {
 
     //graph.add_node_edge(GIZMO_DRIVER, node::MAIN_PASS_DEPENDENCIES)?;
     //graph.add_node_edge(GIZMO_DRIVER, node::MAIN_PASS_DRIVER)?;
+    graph.add_node_edge(node::CLEAR_PASS_DRIVER, GIZMO_DRIVER)?;
     graph.add_node_edge(node::MAIN_PASS_DRIVER, GIZMO_DRIVER)?;
 
     Ok(())
@@ -58,28 +57,26 @@ fn init_rendering(render_app: &mut App) -> Result<(), RenderGraphError> {
 struct GizmoCameraDriver {
     camera: QueryState<
         (
-            Entity,
-            CRef<ExtractedView>,
             CRef<ViewTarget>,
             CRef<ViewDepthTexture>,
             CRef<ViewUniformOffset>,
         ),
         With<Camera3d>,
     >,
-    lines: Lines,
-    to_draw: u32,
 
+    to_draw: u32,
     view_bind: Option<BindGroup>,
 }
 
 impl FromWorld for GizmoCameraDriver {
     fn from_world(world: &mut World) -> Self {
-        let pipeline = LinesPipeline::from_world(world);
+        //let pipeline = LinesPipeline::from_world(world);
+        //let lines = Lines::from_world(world);
 
+        let pipeline = world.resource::<LinesPipeline>();
         let device = world.resource::<RenderDevice>();
-        let lines = Lines::new(device);
-
         let view_uniforms = world.resource::<ViewUniforms>();
+
         let view_bind = view_uniforms.uniforms.binding().map(|resource| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("lines buffer"),
@@ -91,13 +88,9 @@ impl FromWorld for GizmoCameraDriver {
             })
         });
 
-        world.insert_resource(pipeline);
-
         Self {
             camera: QueryState::new(world),
-            lines,
             to_draw: 0,
-
             view_bind,
         }
     }
@@ -118,11 +111,16 @@ impl Node for GizmoCameraDriver {
         );
         */
 
+        self.to_draw = world.resource_scope(|world, mut lines: Mut<Lines>| {
+            let device = world.resource::<RenderDevice>();
+            let queue = world.resource::<RenderQueue>();
+
+            lines.vertex.upload(device, queue);
+            lines.index.upload(device, queue)
+        });
+
         let pipeline = world.resource::<LinesPipeline>();
         let device = world.resource::<RenderDevice>();
-        let queue = world.resource::<RenderQueue>();
-        self.lines.vertex.upload(device, queue);
-        self.to_draw = self.lines.index.upload(device, queue);
 
         let view_uniforms = world.resource::<ViewUniforms>();
         self.view_bind = view_uniforms.uniforms.binding().map(|resource| {
@@ -144,17 +142,22 @@ impl Node for GizmoCameraDriver {
         world: &World,
     ) -> Result<(), NodeRunError> {
         let pipeline = world.resource::<LinesPipeline>();
+        let lines = world.resource::<Lines>();
 
         if let Some(view_bind_group) = self.view_bind.as_ref() {
-            for (camera, view, target, depth, offset) in self.camera.iter_manual(world) {
+            for (target, depth, offset) in self.camera.iter_manual(world) {
                 //graph.run_sub_graph(draw_3d_graph::NAME, vec![SlotValue::Entity(camera)])?;
 
                 let desc = wgpu::RenderPassDescriptor {
                     label: Some("lines render pass"),
-                    color_attachments: &[target.get_color_attachment(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: true,
-                    })],
+                    color_attachments: &[wgpu::RenderPassColorAttachment {
+                        view: &target.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: true,
+                        },
+                    }],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view: &depth.view,
                         depth_ops: Some(wgpu::Operations {
@@ -171,11 +174,9 @@ impl Node for GizmoCameraDriver {
 
                 if self.to_draw > 0 {
                     render_pass.set_pipeline(&pipeline.pipeline_lines);
-                    render_pass.set_vertex_buffer(0, *self.lines.vertex.buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        *self.lines.index.buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass.set_vertex_buffer(0, *lines.vertex.buffer.slice(..));
+                    render_pass
+                        .set_index_buffer(*lines.index.buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..self.to_draw, 0, 0..1);
                 }
 
@@ -198,13 +199,7 @@ impl FromWorld for LinesPipeline {
     fn from_world(world: &mut World) -> Self {
         let device = world.get_resource::<RenderDevice>().unwrap();
 
-        //let shader_source = wgpu::include_wgsl!("gizmo.wgsl");
-        //let shader_source = wgpu::include_wgsl!("gizmo.wgsl");
-        let shader_source = std::fs::read_to_string("src/scene/gizmo.wgsl").unwrap();
-        let shader_source = wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-        };
+        let shader_source = wgpu::include_wgsl!("gizmo.wgsl");
         let shader_module = device.create_shader_module(&shader_source);
 
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -315,8 +310,9 @@ pub struct Lines {
     index: PodBuffer<u32>,
 }
 
-impl Lines {
-    pub fn new(device: &RenderDevice) -> Self {
+impl FromWorld for Lines {
+    fn from_world(world: &mut World) -> Self {
+        let device = world.resource::<RenderDevice>();
         Self {
             vertex: PodBuffer::new(
                 device,
@@ -332,7 +328,9 @@ impl Lines {
             ),
         }
     }
+}
 
+impl Lines {
     pub fn extend_points(&mut self, color: [u8; 4], points: impl IntoIterator<Item = Vec3>) {
         let points = points.into_iter();
         self.extend(points.map(|position| Vertex { position, color }));

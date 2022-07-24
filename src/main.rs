@@ -232,7 +232,7 @@ fn exampe_scene() -> World {
 
 fn init_split_tree() -> crate::app::SplitTree {
     use crate::app::*;
-    use crate::panel::{FileBrowser, Hierarchy, Inspector, PlaceholderTab};
+    use crate::panel::{Hierarchy, Inspector, PlaceholderTab, Timeline};
     use crate::scene::SceneTab;
 
     type NodeTodo = PlaceholderTab;
@@ -244,14 +244,16 @@ fn init_split_tree() -> crate::app::SplitTree {
     let hierarchy = Tab::new(icon::OUTLINER, "Hierarchy", Hierarchy::default());
     let inspector = Tab::new(icon::PROPERTIES, "Inspector", Inspector::default());
 
-    let files = Tab::new(icon::FILEBROWSER, "File Browser", FileBrowser::default());
-    let assets = Tab::new(icon::ASSET_MANAGER, "Asset Manager", NodeTodo::default());
+    //let files = Tab::new(icon::FILEBROWSER, "File Browser", FileBrowser::default());
+    //let assets = Tab::new(icon::ASSET_MANAGER, "Asset Manager", NodeTodo::default());
+
+    let timeline = Tab::new(icon::TIME, "Timeline", Timeline::default());
 
     let root = TreeNode::leaf_with(vec![scene, node_tree]);
     let mut split_tree = SplitTree::new(root);
 
-    let [a, b] = split_tree.split_tabs(NodeIndex::root(), Split::Left, 0.3, vec![inspector]);
-    let [_, _] = split_tree.split_tabs(a, Split::Below, 0.7, vec![files, assets]);
+    let [a, b] = split_tree.split_tabs(NodeIndex::root(), Split::Right, 0.7, vec![inspector]);
+    let [_, _] = split_tree.split_tabs(a, Split::Below, 0.3, vec![timeline]);
     let [_, _] = split_tree.split_tabs(b, Split::Below, 0.5, vec![hierarchy]);
 
     split_tree
