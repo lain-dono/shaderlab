@@ -13,19 +13,15 @@ pub struct ProxyTransform {
 
 impl ProxyTransform {
     pub fn to_local(&self) -> Transform {
-            Transform {
-                translation: self.translation,
-                rotation: self.rotation,
-                scale: self.scale,
-            }
-    }
-
-    pub fn to_global(&self) -> GlobalTransform {
-        GlobalTransform {
+        Transform {
             translation: self.translation,
             rotation: self.rotation,
             scale: self.scale,
         }
+    }
+
+    pub fn to_global(&self) -> GlobalTransform {
+        self.to_local().into()
     }
 }
 
@@ -41,10 +37,9 @@ impl Default for ProxyTransform {
 
 impl Proxy for ProxyTransform {
     fn insert(self, world: &mut World, entity: Entity) {
-        world.entity_mut(entity).insert_bundle((
-            self.to_local(),
-            GlobalTransform::default(),
-        ));
+        world
+            .entity_mut(entity)
+            .insert_bundle((self.to_local(), GlobalTransform::default()));
     }
 }
 

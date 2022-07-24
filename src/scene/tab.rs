@@ -170,7 +170,9 @@ impl TabInner for SceneTab {
                         mapping
                             .transform
                             .get(&index)
-                            .and_then(|transform| world_to_screen_and_z(transform.translation))
+                            .and_then(|transform| {
+                                world_to_screen_and_z(transform.affine().translation.into())
+                            })
                             .map(|(pos, z)| (z, pos, index))
                     }),
             );
@@ -235,7 +237,7 @@ impl TabInner for SceneTab {
                 let is_selected = selected == Some(index);
 
                 let get_pos = |dir, color| {
-                    world_to_screen(transform.translation + dir)
+                    world_to_screen(Vec3::from(transform.affine().translation) + dir)
                         .map(|p| (p, (1.0, from_raw(color))))
                 };
 

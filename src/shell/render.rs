@@ -3,8 +3,10 @@ use super::{
     WindowSize,
 };
 use bevy::prelude::*;
+use bevy::render::render_resource::{DynamicUniformBuffer, ShaderType};
+use bevy::render::Extract;
 use bevy::render::{
-    render_resource::{std140::AsStd140, BindGroup, BufferId, DynamicUniformVec},
+    render_resource::{BindGroup, BufferId},
     renderer::{RenderDevice, RenderQueue},
     {render_asset::RenderAssets, texture::Image},
 };
@@ -50,12 +52,12 @@ impl ExtractedEguiTextures {
 
 #[derive(Default)]
 pub struct EguiTransforms {
-    pub buffer: DynamicUniformVec<EguiTransform>,
+    pub buffer: DynamicUniformBuffer<EguiTransform>,
     pub offsets: HashMap<WindowId, u32>,
     pub bind_group: Option<(BufferId, BindGroup)>,
 }
 
-#[derive(AsStd140)]
+#[derive(ShaderType, Default)]
 pub struct EguiTransform {
     scale: Vec2,
     translation: Vec2,
@@ -74,13 +76,12 @@ impl EguiTransform {
 
 pub fn extract_render_data(
     mut commands: Commands,
-    mut render_output: ResMut<HashMap<WindowId, EguiRenderOutput>>,
-    sizes: ResMut<HashMap<WindowId, WindowSize>>,
-    settings: Res<EguiSettings>,
-    context: Res<EguiContext>,
+    render_output: Extract<Res<HashMap<WindowId, EguiRenderOutput>>>,
+    sizes: Extract<Res<HashMap<WindowId, WindowSize>>>,
+    settings: Extract<Res<EguiSettings>>,
+    context: Extract<Res<EguiContext>>,
 ) {
-    let render_output = std::mem::take(&mut *render_output);
-    commands.insert_resource(ExtractedRenderOutput(render_output));
+    commands.insert_resource(ExtractedRenderOutput(render_output.clone()));
     commands.insert_resource(ExtractedEguiSettings(settings.clone()));
     commands.insert_resource(ExtractedEguiContext(context.ctx.clone()));
     commands.insert_resource(ExtractedWindowSizes(sizes.clone()));
@@ -88,8 +89,8 @@ pub fn extract_render_data(
 
 pub fn extract_textures(
     mut commands: Commands,
-    context: Res<EguiContext>,
-    textures: ResMut<EguiManagedTextures>,
+    context: Extract<Res<EguiContext>>,
+    textures: Extract<Res<EguiManagedTextures>>,
 ) {
     commands.insert_resource(ExtractedEguiTextures {
         egui_textures: textures
@@ -123,7 +124,7 @@ pub fn prepare_transforms(
 
     transforms.buffer.write_buffer(&device, &queue);
 
-    if let Some(buffer) = transforms.buffer.uniform_buffer() {
+    if let Some(buffer) = transforms.buffer.buffer() {
         match transforms.bind_group {
             Some((id, _)) if buffer.id() == id => {}
             _ => {

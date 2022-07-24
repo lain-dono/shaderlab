@@ -17,8 +17,8 @@ webbrowser = "0.7.0"
 
 bytemuck = "1.9"
 
-wgpu = "0.12"
-naga = { version = "0.8", features = ["wgsl-in", "wgsl-out"] }
+wgpu = "0.13"
+naga = { version = "0.9", features = ["wgsl-in", "wgsl-out"] }
 downcast-rs = "1.2"
 
 tracing = "0.1"
@@ -27,8 +27,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ahash = "0.7.6"
 sublime_fuzzy = "0.7.0"
 
-bevy = "0.7"
-bevy_reflect = "0.7"
+bevy = "0.8.0-dev"
+bevy_reflect = "0.8.0-dev"
 
 smallvec = "1"
 
@@ -51,3 +51,7 @@ naga = { opt-level = 3 }
 winit = { opt-level = 3 }
 egui = { opt-level = 3 }
 bevy = { opt-level = 3 }
+
+[patch.crates-io]
+bevy = { git = 'https://github.com/bevyengine/bevy' }
+bevy_reflect = { git = 'https://github.com/bevyengine/bevy' }

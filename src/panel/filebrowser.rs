@@ -24,7 +24,7 @@ fn read_dir(ui: &mut egui::Ui, io: &dyn AssetIo, path: &Path) {
         if let Ok(dir) = io.read_directory(path) {
             for path in dir {
                 let path_string = path.file_name().unwrap().to_string_lossy().to_string();
-                if io.is_directory(&path) {
+                if io.is_dir(&path) {
                     ui.label(format!("{} {}", crate::icon::FILE_FOLDER, path_string));
                     read_dir(ui, io, &path);
                 } else {

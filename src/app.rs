@@ -117,7 +117,7 @@ pub fn ui_root(
     type_registry: Res<TypeRegistry>,
     mut assets: ResMut<AssetServer>,
 ) {
-    let scene = scenes.get_mut(scene.clone()).unwrap();
+    let scene = scenes.get_mut(&scene).unwrap();
 
     let (rect, mut ui) = {
         let [ctx] = context.ctx_mut([WindowId::primary()]);

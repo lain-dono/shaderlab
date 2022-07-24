@@ -10,13 +10,14 @@ use bevy::{
     input::{
         keyboard::{KeyCode, KeyboardInput},
         mouse::{MouseButton, MouseButtonInput, MouseScrollUnit, MouseWheel},
-        ElementState, Input,
+        ButtonState, Input,
     },
+    prelude::Time,
     window::{
-        CursorEntered, CursorIcon, CursorLeft, CursorMoved, ReceivedCharacter, RequestRedraw,
-        WindowCreated, WindowFocused, WindowId, Windows,
+        CursorEntered, CursorLeft, CursorMoved, ReceivedCharacter, RequestRedraw, WindowCreated,
+        WindowFocused, WindowId, Windows,
     },
-    {core::Time, log, utils::HashMap},
+    {log, utils::HashMap},
 };
 
 #[derive(SystemParam)]
@@ -180,7 +181,7 @@ pub fn process_input(
                     MouseButton::Middle => Some(egui::PointerButton::Middle),
                     _ => None,
                 };
-                let pressed = matches!(mouse_button_event.state, ElementState::Pressed);
+                let pressed = matches!(mouse_button_event.state, ButtonState::Pressed);
                 if let Some(button) = button {
                     events.push(egui::Event::PointerButton {
                         pos: position.to_pos2(),
@@ -235,8 +236,8 @@ pub fn process_input(
         for ev in events.keyboard_input.iter() {
             if let Some(key) = ev.key_code.and_then(convert::key) {
                 let pressed = match ev.state {
-                    ElementState::Pressed => true,
-                    ElementState::Released => false,
+                    ButtonState::Pressed => true,
+                    ButtonState::Released => false,
                 };
                 focused_input.raw_input.events.push(egui::Event::Key {
                     key,

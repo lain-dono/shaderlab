@@ -340,7 +340,7 @@ impl ReflectScene {
 
                 if let Some(reflect) = reflect {
                     for (index, &entity) in archetype.entities().iter().enumerate() {
-                        if let Some(component) = reflect.reflect_component(world, entity) {
+                        if let Some(component) = reflect.reflect(world, entity) {
                             entities[offset + index]
                                 .components
                                 .push(component.clone_value());
@@ -399,9 +399,9 @@ impl ReflectScene {
                 let type_id = registration.type_id();
 
                 if world.entity(entity).contains_type_id(type_id) {
-                    reflect.apply_component(world, entity, component);
+                    reflect.apply(world, entity, component);
                 } else {
-                    reflect.add_component(world, entity, component);
+                    reflect.insert(world, entity, component);
                 }
             }
         }

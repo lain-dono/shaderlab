@@ -38,6 +38,7 @@ impl Builder {
             ReflectMut::TupleStruct(reflect) => self.field_tuple_struct(ui, reflect),
             ReflectMut::Tuple(reflect) => self.field_tuple(ui, reflect),
             ReflectMut::List(reflect) => self.field_list(ui, reflect),
+            ReflectMut::Array(reflect) => self.field_array(ui, reflect),
             ReflectMut::Map(reflect) => self.field_map(ui, reflect),
             ReflectMut::Value(reflect) => {
                 macro_rules! drag {
@@ -191,6 +192,15 @@ impl Builder {
     }
 
     fn field_list(&self, ui: &mut Ui, reflect: &mut (dyn List + 'static)) {
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            for index in 0..reflect.len() {
+                let field = reflect.get_mut(index).unwrap();
+                self.field_pair(ui, index.to_string(), field);
+            }
+        });
+    }
+
+    fn field_array(&self, ui: &mut Ui, reflect: &mut (dyn Array + 'static)) {
         ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
             for index in 0..reflect.len() {
                 let field = reflect.get_mut(index).unwrap();

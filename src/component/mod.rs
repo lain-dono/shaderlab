@@ -34,12 +34,6 @@ impl ComponentEditor for bevy::prelude::Parent {
     }
 }
 
-impl ComponentEditor for bevy::prelude::PreviousParent {
-    fn skip() -> bool {
-        true
-    }
-}
-
 impl ComponentEditor for bevy::prelude::Children {
     fn skip() -> bool {
         true

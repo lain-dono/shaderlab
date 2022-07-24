@@ -1,34 +1,34 @@
 struct View {
-    view_proj: mat4x4<f32>;
-    view: mat4x4<f32>;
-    inverse_view: mat4x4<f32>;
-    projection: mat4x4<f32>;
-    world_position: vec3<f32>;
+    view_proj: mat4x4<f32>,
+    view: mat4x4<f32>,
+    inverse_view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    world_position: vec3<f32>,
 
-    width: f32;
-    height: f32;
-};
+    width: f32,
+    height: f32,
+}
 
-[[group(0), binding(0)]] var<uniform> view: View;
+@group(0) @binding(0) var<uniform> view: View;
 
 struct LineInput {
-    [[location(0)]] position: vec3<f32>;
-    [[location(1)]] color: vec4<f32>;
-};
+    @location(0) position: vec3<f32>,
+    @location(1) color: vec4<f32>,
+}
 
 struct LineOutput {
-    [[builtin(position)]] position: vec4<f32>;
-    [[location(0)]] color: vec4<f32>;
-};
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+}
 
-[[stage(vertex)]]
+@vertex
 fn vs_main_line(in: LineInput) -> LineOutput {
     let position = view.view_proj * vec4<f32>(in.position, 1.0);
     return LineOutput(position, in.color);
 }
 
-[[stage(fragment)]]
-fn fs_main_line(in: LineOutput) -> [[location(0)]] vec4<f32> {
+@fragment
+fn fs_main_line(in: LineOutput) -> @location(0) vec4<f32> {
     return in.color;
 }
 
@@ -77,11 +77,11 @@ fn inverse4x4(m: mat4x4<f32>) -> mat4x4<f32> {
 }
 
 struct GridOutput {
-    [[builtin(position)]] position: vec4<f32>;
-    [[location(0)]] near: vec3<f32>;
-    [[location(1)]] far: vec3<f32>;
-    [[location(2)]] uv: vec2<f32>;
-};
+    @builtin(position) position: vec4<f32>,
+    @location(0) near: vec3<f32>,
+    @location(1) far: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+}
 
 fn unproject_point(x: f32, y: f32, z: f32) -> vec3<f32> {
     let unprojected = inverse4x4(view.view_proj) * vec4<f32>(x, y, z, 1.0);
@@ -92,8 +92,8 @@ fn resolution() -> vec2<f32> {
     return vec2<f32>(view.width, view.height);
 }
 
-[[stage(vertex)]]
-fn vs_main_grid([[builtin(vertex_index)]] in_vertex_index: u32) -> GridOutput {
+@vertex
+fn vs_main_grid(@builtin(vertex_index) in_vertex_index: u32) -> GridOutput {
     let u = f32((in_vertex_index << 1u) & 2u);
     let v = f32(in_vertex_index & 2u);
     let u = u - 1.0;
@@ -111,10 +111,10 @@ fn grid(pos: vec3<f32>, scale: f32, axis: bool) -> vec4<f32> {
     let coord = pos.xz * scale; // use the scale variable to set the distance between the lines
     let derivative = fwidth(coord);
     let grid = abs(fract(coord - 0.5) - 0.5) / derivative;
-    let line = min(grid.x, grid.y);
+    let grid_line = min(grid.x, grid.y);
     let minimumz = min(derivative.y, 1.0);
     let minimumx = min(derivative.x, 1.0);
-    let alpha = 1.0 - min(line, 1.0);
+    let alpha = 1.0 - min(grid_line, 1.0);
     var color = vec4<f32>(0.01) * alpha;
     if (axis) {
         let extra = 1.0 / scale;
@@ -138,11 +138,11 @@ fn grid(pos: vec3<f32>, scale: f32, axis: bool) -> vec4<f32> {
 }
 
 struct FragOut {
-    [[builtin(frag_depth)]] depth: f32;
-    [[location(0)]] color: vec4<f32>;
-};
+    @builtin(frag_depth) depth: f32,
+    @location(0) color: vec4<f32>,
+}
 
-[[stage(fragment)]]
+@fragment
 fn fs_main_grid(in: GridOutput) -> FragOut {
     let t = -in.near.y / (in.far.y - in.near.y);
     let pos = in.near + t * (in.far - in.near);

@@ -8,12 +8,12 @@ use bevy::{
     render::{
         render_graph::{Node, NodeRunError, RenderGraphContext},
         render_resource::{
-            std140::AsStd140, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-            BindingType, BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer,
-            BufferSize, BufferUsages, ColorTargetState, ColorWrites, Extent3d, FrontFace,
-            IndexFormat, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor,
-            PrimitiveState, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
-            ShaderStages, TextureDimension, TextureFormat, TextureSampleType, TextureViewDimension,
+            BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType,
+            BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer, BufferUsages,
+            ColorTargetState, ColorWrites, Extent3d, FrontFace, IndexFormat, LoadOp,
+            MultisampleState, Operations, PipelineLayoutDescriptor, PrimitiveState,
+            RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, ShaderStages,
+            ShaderType, TextureDimension, TextureFormat, TextureSampleType, TextureViewDimension,
             VertexStepMode,
         },
         renderer::{RenderContext, RenderDevice, RenderQueue},
@@ -35,7 +35,7 @@ impl FromWorld for EguiPipeline {
         let render_device = world.get_resource::<RenderDevice>().unwrap();
 
         let shader_source = wgpu::include_wgsl!("shader.wgsl");
-        let shader_module = render_device.create_shader_module(&shader_source);
+        let shader_module = render_device.create_shader_module(shader_source);
 
         let transform_bind_group_layout =
             render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -46,9 +46,7 @@ impl FromWorld for EguiPipeline {
                     ty: BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: true,
-                        min_binding_size: Some(
-                            BufferSize::new(EguiTransform::std140_size_static() as u64).unwrap(),
-                        ),
+                        min_binding_size: Some(EguiTransform::min_size()),
                     },
                     count: None,
                 }],
@@ -99,7 +97,7 @@ impl FromWorld for EguiPipeline {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader_module,
                     entry_point: "fs_main",
-                    targets: &[ColorTargetState {
+                    targets: &[Some(ColorTargetState {
                         format: TextureFormat::bevy_default(),
                         blend: Some(BlendState {
                             color: BlendComponent {
@@ -114,7 +112,7 @@ impl FromWorld for EguiPipeline {
                             },
                         }),
                         write_mask: ColorWrites::ALL,
-                    }],
+                    })],
                 }),
                 primitive: PrimitiveState {
                     front_face: FrontFace::Cw,
@@ -325,14 +323,14 @@ impl Node for EguiNode {
 
         let desc = RenderPassDescriptor {
             label: Some("egui render pass"),
-            color_attachments: &[RenderPassColorAttachment {
+            color_attachments: &[Some(RenderPassColorAttachment {
                 view,
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Load,
                     store: true,
                 },
-            }],
+            })],
             depth_stencil_attachment: None,
         };
 

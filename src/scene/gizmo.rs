@@ -1,11 +1,12 @@
 use bevy::{
-    core_pipeline::node,
-    ecs::query,
+    ecs::{query, system::lifetimeless::Read},
     prelude::*,
     render::{
-        camera::Camera3d,
-        render_graph::{Node, NodeRunError, RenderGraph, RenderGraphContext, RenderGraphError},
-        render_resource::{std140::AsStd140, BindGroup, BindGroupLayout, Buffer, RenderPipeline},
+        render_graph::{
+            Node, NodeRunError, RenderGraph, RenderGraphContext, RenderGraphError, SlotInfo,
+            SlotType,
+        },
+        render_resource::{BindGroup, BindGroupLayout, Buffer, RenderPipeline, ShaderType},
         renderer::{RenderContext, RenderDevice, RenderQueue},
         texture::BevyDefault,
         view::{
@@ -32,11 +33,13 @@ fn init_rendering(render_app: &mut App) -> Result<(), RenderGraphError> {
     render_app.init_resource::<Lines>();
     render_app.init_resource::<LinesPipeline>();
 
+    /* */
     // This will add 3D render phases for the new camera.
     //render_app.add_system_to_stage(RenderStage::Extract, extract_gizmo_camera_phases);
 
-    let driver = GizmoCameraDriver::from_world(&mut render_app.world);
+    let node = GizmoCameraDriver::from_world(&mut render_app.world);
 
+    /*
     let mut graph = render_app.world.resource_mut::<RenderGraph>();
     graph.add_node(GIZMO_DRIVER, driver);
 
@@ -47,8 +50,38 @@ fn init_rendering(render_app: &mut App) -> Result<(), RenderGraphError> {
 
     //graph.add_node_edge(GIZMO_DRIVER, node::MAIN_PASS_DEPENDENCIES)?;
     //graph.add_node_edge(GIZMO_DRIVER, node::MAIN_PASS_DRIVER)?;
-    graph.add_node_edge(node::CLEAR_PASS_DRIVER, GIZMO_DRIVER)?;
-    graph.add_node_edge(node::MAIN_PASS_DRIVER, GIZMO_DRIVER)?;
+
+    //graph.add_node_edge(node::CLEAR_PASS_DRIVER, GIZMO_DRIVER)?;
+    //graph.add_node_edge(node::MAIN_PASS_DRIVER, GIZMO_DRIVER)?;
+
+    graph.add_node_edge(
+        bevy::core_pipeline::core_3d::graph::node::MAIN_PASS,
+        GIZMO_DRIVER,
+    )?;
+     */
+
+    let mut graph = render_app.world.resource_mut::<RenderGraph>();
+
+    let draw_3d_graph = graph
+        .get_sub_graph_mut(bevy::core_pipeline::core_3d::graph::NAME)
+        .unwrap();
+    draw_3d_graph.add_node(GIZMO_DRIVER, node);
+
+    draw_3d_graph
+        .add_node_edge(
+            bevy::core_pipeline::core_3d::graph::node::MAIN_PASS,
+            GIZMO_DRIVER,
+        )
+        .unwrap();
+
+    draw_3d_graph
+        .add_slot_edge(
+            draw_3d_graph.input_node().unwrap().id,
+            bevy::core_pipeline::core_3d::graph::input::VIEW_ENTITY,
+            GIZMO_DRIVER,
+            "view",
+        )
+        .unwrap();
 
     Ok(())
 }
@@ -57,9 +90,9 @@ fn init_rendering(render_app: &mut App) -> Result<(), RenderGraphError> {
 struct GizmoCameraDriver {
     camera: QueryState<
         (
-            CRef<ViewTarget>,
-            CRef<ViewDepthTexture>,
-            CRef<ViewUniformOffset>,
+            Read<ViewTarget>,
+            Read<ViewDepthTexture>,
+            Read<ViewUniformOffset>,
         ),
         With<Camera3d>,
     >,
@@ -97,6 +130,10 @@ impl FromWorld for GizmoCameraDriver {
 }
 
 impl Node for GizmoCameraDriver {
+    fn input(&self) -> Vec<SlotInfo> {
+        vec![SlotInfo::new("view", SlotType::Entity)]
+    }
+
     fn update(&mut self, world: &mut World) {
         self.camera.update_archetypes(world);
 
@@ -150,14 +187,14 @@ impl Node for GizmoCameraDriver {
 
                 let desc = wgpu::RenderPassDescriptor {
                     label: Some("lines render pass"),
-                    color_attachments: &[wgpu::RenderPassColorAttachment {
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &target.view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: true,
                         },
-                    }],
+                    })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view: &depth.view,
                         depth_ops: Some(wgpu::Operations {
@@ -200,7 +237,7 @@ impl FromWorld for LinesPipeline {
         let device = world.get_resource::<RenderDevice>().unwrap();
 
         let shader_source = wgpu::include_wgsl!("gizmo.wgsl");
-        let shader_module = device.create_shader_module(&shader_source);
+        let shader_module = device.create_shader_module(shader_source);
 
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("gizmo camera bind group layout"),
@@ -210,9 +247,7 @@ impl FromWorld for LinesPipeline {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
-                    min_binding_size: Some(
-                        wgpu::BufferSize::new(ViewUniform::std140_size_static() as u64).unwrap(),
-                    ),
+                    min_binding_size: Some(ViewUniform::min_size()),
                 },
                 count: None,
             }],
@@ -239,11 +274,11 @@ impl FromWorld for LinesPipeline {
             fragment: Some(wgpu::FragmentState {
                 module: &shader_module,
                 entry_point: "fs_main_line",
-                targets: &[wgpu::ColorTargetState {
+                targets: &[Some(wgpu::ColorTargetState {
                     format: wgpu::TextureFormat::bevy_default(),
                     blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
-                }],
+                })],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::LineStrip,
@@ -274,11 +309,11 @@ impl FromWorld for LinesPipeline {
             fragment: Some(wgpu::FragmentState {
                 module: &shader_module,
                 entry_point: "fs_main_grid",
-                targets: &[wgpu::ColorTargetState {
+                targets: &[Some(wgpu::ColorTargetState {
                     format: wgpu::TextureFormat::bevy_default(),
                     blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
-                }],
+                })],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleStrip,
@@ -451,22 +486,6 @@ impl Vertex {
     pub fn new(position: Vec3, color: [u8; 4]) -> Self {
         Self { position, color }
     }
-}
-
-pub struct CRef<T>(std::marker::PhantomData<T>);
-
-impl<T: Component> query::WorldQuery for CRef<T> {
-    type Fetch = query::ReadFetch<T>;
-    type State = query::ReadState<T>;
-    type ReadOnlyFetch = query::ReadFetch<T>;
-}
-
-pub struct CMut<T>(std::marker::PhantomData<T>);
-
-impl<T: Component> query::WorldQuery for CMut<T> {
-    type Fetch = query::WriteFetch<T>;
-    type State = query::WriteState<T>;
-    type ReadOnlyFetch = query::ReadOnlyWriteFetch<T>;
 }
 
 // see http://clrs.cc

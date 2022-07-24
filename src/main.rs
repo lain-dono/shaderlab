@@ -4,7 +4,7 @@
 
 use crate::scene::{ReflectScene, ReflectSceneSpawner};
 use crate::util::anymap::AnyMap;
-use bevy::core_pipeline::RenderTargetClearColors;
+use bevy::core_pipeline::clear_color::ClearColorConfig;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::reflect::TypeRegistryArc;
@@ -68,7 +68,6 @@ fn main() {
 fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    mut clear_colors: ResMut<RenderTargetClearColors>,
     mut context: ResMut<crate::shell::EguiContext>,
     mut spawner: ResMut<ReflectSceneSpawner>,
     mut scenes: ResMut<Assets<ReflectScene>>,
@@ -80,9 +79,13 @@ fn setup(
 
         let target = RenderTarget::Image(image_handle);
         let gray = 0x2B as f32 / 255.0;
-        clear_colors.insert(target.clone(), Color::rgba(gray, gray, gray, 1.0));
+        let clear_color = Color::rgba(gray, gray, gray, 1.0);
 
-        commands.spawn_bundle(PerspectiveCameraBundle {
+        commands.spawn_bundle(Camera3dBundle {
+            camera_3d: Camera3d {
+                clear_color: ClearColorConfig::Custom(clear_color),
+                ..default()
+            },
             camera: Camera {
                 target,
                 ..default()
@@ -235,7 +238,7 @@ fn init_split_tree() -> crate::app::SplitTree {
     use crate::panel::{Hierarchy, Inspector, PlaceholderTab, Timeline};
     use crate::scene::SceneTab;
 
-    type NodeTodo = PlaceholderTab;
+    //type NodeTodo = PlaceholderTab;
 
     let node_tree = PlaceholderTab::default();
     let node_tree = Tab::new(icon::NODETREE, "Node Tree", node_tree);

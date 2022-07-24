@@ -350,7 +350,7 @@ fn free_textures(
 pub fn setup_pipeline(graph: &mut RenderGraph, window_id: WindowId, pass: &'static str) {
     graph.add_node(pass, EguiNode::new(window_id));
 
-    let main_driver = bevy::core_pipeline::node::MAIN_PASS_DRIVER;
+    let main_driver = bevy::render::main_graph::node::CAMERA_DRIVER;
     graph.add_node_edge(main_driver, pass).unwrap();
 
     let _ = graph.add_node_edge("ui_pass_driver", pass);

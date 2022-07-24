@@ -44,7 +44,6 @@ impl TabInner for Inspector {
                         {
                             use bevy::prelude::*;
                             add_custom_editor_if::<Parent>(entity.types, type_name);
-                            add_custom_editor_if::<PreviousParent>(entity.types, type_name);
                             add_custom_editor_if::<Children>(entity.types, type_name);
                         }
 

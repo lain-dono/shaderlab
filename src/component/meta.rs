@@ -31,12 +31,15 @@ impl Default for ProxyMeta {
 
 impl Proxy for ProxyMeta {
     fn insert(self, world: &mut World, entity: Entity) {
+        let mut v = ComputedVisibility::not_visible();
+        v.set_visible_in_view();
+        //v.set_visible_in_hierarchy();
         world.entity_mut(entity).insert_bundle((
             Name::new(self.name),
             Visibility {
                 is_visible: self.is_visible,
             },
-            ComputedVisibility { is_visible: true },
+            v,
         ));
     }
 }
