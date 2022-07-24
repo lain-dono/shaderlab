@@ -5,7 +5,7 @@ use super::{
 use bevy::{
     ecs::{
         event::{EventReader, EventWriter},
-        system::{Local, NonSend, Res, ResMut, SystemParam},
+        system::{Local, Res, ResMut, SystemParam},
     },
     input::{
         keyboard::{KeyCode, KeyboardInput},
@@ -13,10 +13,10 @@ use bevy::{
         ElementState, Input,
     },
     window::{
-        CursorEntered, CursorLeft, CursorMoved, ReceivedCharacter, RequestRedraw, WindowCreated,
-        WindowFocused, WindowId, Windows,
+        CursorEntered, CursorIcon, CursorLeft, CursorMoved, ReceivedCharacter, RequestRedraw,
+        WindowCreated, WindowFocused, WindowId, Windows,
     },
-    {core::Time, log, utils::HashMap, winit::WinitWindows},
+    {core::Time, log, utils::HashMap},
 };
 
 #[derive(SystemParam)]
@@ -283,7 +283,7 @@ pub fn begin_frame(
 }
 
 pub fn process_output(
-    windows: Option<NonSend<WinitWindows>>,
+    mut windows: Option<ResMut<Windows>>,
     mut context: ResMut<EguiContext>,
     mut output: ResMut<HashMap<WindowId, EguiOutput>>,
     mut render_output: ResMut<HashMap<WindowId, EguiRenderOutput>>,
@@ -309,10 +309,16 @@ pub fn process_output(
             clipboard.set_contents(&platform_output.copied_text);
         }
 
-        if let Some(ref windows) = windows {
-            if let Some(window) = windows.get_window(window_id) {
-                let cursor = convert::cursor_icon(platform_output.cursor_icon).unwrap_or_default();
-                window.set_cursor_icon(cursor);
+        if let Some(ref mut windows) = windows {
+            if let Some(window) = windows.get_mut(window_id) {
+                if let Some(cursor) = convert::cursor_icon(platform_output.cursor_icon) {
+                    window.set_cursor_icon(cursor);
+                    if !window.cursor_visible() {
+                        window.set_cursor_visibility(true);
+                    }
+                } else if window.cursor_visible() {
+                    window.set_cursor_visibility(false);
+                }
             }
         }
 
