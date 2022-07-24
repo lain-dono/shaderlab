@@ -395,8 +395,8 @@ impl BoneFrame {
                 curve: Curve,
             ) {
                 if let Some(next) = next {
-                    let a = start + vec2(curr, LINE_HEIGHT);
-                    let b = start + vec2(next, 0.0);
+                    let a = start + vec2(curr, LINE_HEIGHT - 1.0);
+                    let b = start + vec2(next, 1.0);
                     let color = CURVE_COLOR.linear_multiply(CURVE_COLOR_FACTOR);
                     match curve {
                         Curve::Linear => {
