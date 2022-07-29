@@ -2,8 +2,7 @@ use crate::component::{ComponentEditor, Proxy, ReflectComponentEditor, ReflectPr
 use crate::style::Style;
 use bevy::asset::{Asset, AssetPath};
 use bevy::prelude::*;
-use bevy::reflect::FromReflect;
-use bevy_reflect::GetPath;
+use bevy::reflect::{FromReflect, GetPath};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 

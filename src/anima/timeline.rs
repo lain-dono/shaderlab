@@ -1,13 +1,8 @@
+use super::{Animation, BoneTimeline, Curve, Keyframe};
 use crate::app::TabInner;
-//use crate::component::{reflect_component_editor, ComponentEditor, ReflectComponentEditor};
 use crate::context::EditorContext;
 use crate::style::Style;
-//use bevy::reflect::{FromType, Reflect, TypeRegistry};
 use egui::*;
-
-pub mod runtime;
-
-use self::runtime::{Animaton, BoneFrame, Curve, Key, LocationKey, RotationKey, ScaleKey};
 
 const LINE_HEIGHT: f32 = 20.0;
 const HEADER_HEIGHT: f32 = 24.0;
@@ -35,77 +30,30 @@ const SCALE_COLOR: Color32 = Color32::from_rgb(0xFF, 0x85, 0x1B);
 
 const ROW_WIDTH: f32 = 24.0;
 
-pub struct Timeline {
+pub struct TimelinePanel {
     current_time: u32,
-    bones: Vec<BoneFrame>,
+    animation: Animation,
 }
 
-impl Default for Timeline {
+impl Default for TimelinePanel {
     fn default() -> Self {
-        let bones = (0..40)
-            .map(|i| BoneFrame {
-                label: format!("Bone #{}", i),
-                open: false,
-                keys: vec![],
-                location: (0..50)
-                    .filter_map(|j| {
-                        ((j + i) % 3 == 0).then(|| LocationKey {
-                            time: j as u32,
-                            curve: if (j + i) % 2 == 0 {
-                                Curve::Linear
-                            } else {
-                                Curve::Spline
-                            },
-                            data: [0.0; 2],
-                        })
-                    })
-                    .collect(),
-
-                rotation: (0..50)
-                    .filter_map(|j| {
-                        ((j + i) % 5 == 0).then(|| RotationKey {
-                            time: j as u32,
-                            curve: if (j + i) % 2 == 0 {
-                                Curve::Linear
-                            } else {
-                                Curve::Spline
-                            },
-                            data: 0.0,
-                        })
-                    })
-                    .collect(),
-
-                scale: (0..50)
-                    .filter_map(|j| {
-                        ((j + i) % 7 == 0).then(|| LocationKey {
-                            time: j as u32,
-                            curve: if (j + i) % 2 == 0 {
-                                Curve::Linear
-                            } else {
-                                Curve::Spline
-                            },
-                            data: [1.0; 2],
-                        })
-                    })
-                    .collect(),
-            })
-            .collect();
+        let animation = super::example::animation();
 
         Self {
             current_time: 8,
-            bones,
+            animation,
         }
     }
 }
 
-impl TabInner for Timeline {
+impl TabInner for TimelinePanel {
     fn ui(&mut self, ui: &mut Ui, style: &Style, _ctx: EditorContext) {
         let rect = ui.available_rect_before_wrap();
         ui.painter().rect_filled(rect, 0.0, BONE_BG_COLOR);
 
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-            style.theme(ui);
+            style.set_theme_visuals(ui);
 
             // title bar
             ui.scope(|ui| {
@@ -153,6 +101,13 @@ impl TabInner for Timeline {
                     let left_split = rect.min.x + LEFT_PADDING;
                     let rect = rect.intersect(Rect::everything_right_of(left_split));
 
+                    let id = Id::new("timeline_current_time");
+                    let outer_response = ui.interact(rect, id, Sense::click_and_drag());
+                    let outer_response =
+                        outer_response.on_hover_cursor(egui::CursorIcon::PointingHand);
+
+                    let is_down = outer_response.is_pointer_button_down_on();
+
                     let count = (rect.width() / ROW_WIDTH) as u32;
                     let ppi = ui.ctx().pixels_per_point();
 
@@ -163,15 +118,15 @@ impl TabInner for Timeline {
 
                         let height = rect.height();
                         let center = pos2(x, rect.min.y + height / 2.0);
-                        let size = vec2(ROW_WIDTH - 2.0, height);
+                        let size = vec2(ROW_WIDTH, height);
                         let item_rect = Rect::from_center_size(center, size);
                         let bg_idx = ui.painter().add(Shape::Noop);
 
                         {
                             let id = Id::new("timeline_current_time").with(i);
-                            let response = ui.interact(item_rect, id, Sense::click());
-                            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-                            if response.clicked() {
+                            let response = ui.interact(item_rect, id, Sense::hover());
+
+                            if is_down && response.hovered() {
                                 self.current_time = i;
                             }
                         }
@@ -211,7 +166,7 @@ impl TabInner for Timeline {
             scroll.show(ui, |ui| {
                 style.scrollarea(ui);
 
-                for bone in &mut self.bones {
+                for bone in &mut self.animation.bones {
                     bone.draw(ui, style, self.current_time);
                 }
             });
@@ -219,13 +174,13 @@ impl TabInner for Timeline {
     }
 }
 
-impl<T> Key<T> {
+impl<T> Keyframe<T> {
     fn position(&self) -> f32 {
         ROW_WIDTH * self.time as f32
     }
 }
 
-impl BoneFrame {
+impl BoneTimeline {
     fn show_location(&self) -> bool {
         !self.location.is_empty()
     }
@@ -240,15 +195,6 @@ impl BoneFrame {
 
     fn extra_lines(&self) -> usize {
         self.show_rotation() as usize + self.show_location() as usize + self.show_scale() as usize
-    }
-
-    fn update_keys(&mut self) {
-        self.keys.clear();
-        self.keys.extend(self.location.iter().map(|k| k.time));
-        self.keys.extend(self.rotation.iter().map(|k| k.time));
-        self.keys.extend(self.scale.iter().map(|k| k.time));
-        self.keys.dedup();
-        self.keys.sort_unstable()
     }
 
     fn draw(&mut self, ui: &mut egui::Ui, style: &Style, current_time: u32) {
@@ -426,7 +372,7 @@ impl BoneFrame {
                     let curve = curr.curve;
                     let id = id.with("rotation").with(curr.time);
                     let curr = curr.position();
-                    let next = self.rotation.get(curr_index + 1).map(Key::position);
+                    let next = self.rotation.get(curr_index + 1).map(Keyframe::position);
                     draw_curve(px, ui, start, curr, next, curve);
                     widget(ui, start, curr, id, ROTATION_COLOR);
                 }
@@ -439,7 +385,7 @@ impl BoneFrame {
                     let curve = curr.curve;
                     let id = id.with("location").with(curr.time);
                     let curr = curr.position();
-                    let next = self.location.get(curr_index + 1).map(Key::position);
+                    let next = self.location.get(curr_index + 1).map(Keyframe::position);
                     draw_curve(px, ui, start, curr, next, curve);
                     widget(ui, start, curr, id, LOCATION_COLOR);
                 }
@@ -452,7 +398,7 @@ impl BoneFrame {
                     let curve = curr.curve;
                     let id = id.with("scale").with(curr.time);
                     let curr = curr.position();
-                    let next = self.scale.get(curr_index + 1).map(Key::position);
+                    let next = self.scale.get(curr_index + 1).map(Keyframe::position);
                     draw_curve(px, ui, start, curr, next, curve);
                     widget(ui, start, curr, id, SCALE_COLOR);
                 }

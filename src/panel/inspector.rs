@@ -19,9 +19,11 @@ impl TabInner for Inspector {
         let entity = match ctx.find_selected(self.lock) {
             Some(entity) => entity,
             None => {
-                Frame::none().margin(Margin::same(16.0)).show(ui, |ui| {
-                    ui.vertical_centered_justified(|ui| ui.label("Select something..."));
-                });
+                Frame::none()
+                    .inner_margin(Margin::same(16.0))
+                    .show(ui, |ui| {
+                        ui.vertical_centered_justified(|ui| ui.label("Select something..."));
+                    });
                 return;
             }
         };
@@ -29,7 +31,7 @@ impl TabInner for Inspector {
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
 
-            style.theme(ui);
+            style.set_theme_visuals(ui);
             style.for_scrollbar(ui);
 
             let scroll = ScrollArea::vertical().auto_shrink([false; 2]);

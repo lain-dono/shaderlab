@@ -21,7 +21,7 @@ impl TabInner for Hierarchy {
 
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-            style.theme(ui);
+            style.set_theme_visuals(ui);
 
             ui.horizontal(|ui| {
                 let frame = Frame::none().inner_margin(Margin::symmetric(3.0, 3.0));

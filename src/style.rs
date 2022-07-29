@@ -21,6 +21,7 @@ pub struct Style {
     pub tab_outline: Color32,
 
     pub selection: Color32,
+    pub selection_opaque: Color32,
 
     pub background: Color32,
     pub panel: Color32,
@@ -52,6 +53,7 @@ impl Default for Style {
             input_fill,
 
             selection: Color32::from_rgba_unmultiplied(61, 133, 224, 30),
+            selection_opaque: Color32::from_rgb(61, 133, 224),
 
             separator_size: 4.0,
             separator_extra: 80.0,
@@ -84,7 +86,7 @@ impl Default for Style {
 }
 
 impl Style {
-    pub fn theme(&self, ui: &mut Ui) {
+    pub fn set_theme_visuals(&self, ui: &mut Ui) {
         let visuals = ui.visuals_mut();
 
         let expansion = 0.0;
@@ -114,6 +116,9 @@ impl Style {
         visuals.widgets.hovered.rounding = rounding;
         visuals.widgets.active.rounding = rounding;
         visuals.widgets.open.rounding = rounding;
+
+        visuals.selection.bg_fill = self.selection_opaque;
+        visuals.selection.stroke.color = Color32::WHITE;
     }
 
     pub fn for_scrollbar(&self, ui: &mut Ui) {

@@ -193,7 +193,7 @@ pub fn ui_root(
         response.rect
     };
 
-    style.theme(&mut ui);
+    style.set_theme_visuals(&mut ui);
 
     ui.painter().set(
         tabbar_bg_idx,

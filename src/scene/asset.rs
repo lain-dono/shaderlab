@@ -10,11 +10,11 @@ use bevy::ecs::{
     system::Command,
 };
 use bevy::prelude::*;
-use bevy::utils::{tracing::error, BoxedFuture, HashMap};
-use bevy_reflect::{
+use bevy::reflect::{
     serde::{ReflectDeserializer, ReflectSerializer},
-    Reflect, TypeRegistry, TypeRegistryArc, TypeUuid,
+    Reflect, TypeRegistry, TypeRegistryInternal, TypeUuid,
 };
+use bevy::utils::{tracing::error, BoxedFuture, HashMap};
 use serde::{
     de::{DeserializeSeed, Error},
     ser::{SerializeSeq, SerializeStruct},
@@ -81,12 +81,12 @@ impl SceneMapping {
 
 #[derive(Debug)]
 pub struct ReflectSceneLoader {
-    registry: TypeRegistryArc,
+    registry: TypeRegistry,
 }
 
 impl FromWorld for ReflectSceneLoader {
     fn from_world(world: &mut World) -> Self {
-        let registry = world.resource::<TypeRegistryArc>();
+        let registry = world.resource::<TypeRegistry>();
         let registry = (*registry).clone();
         Self { registry }
     }
@@ -314,7 +314,7 @@ pub struct ReflectScene {
 
 impl ReflectScene {
     /// Create a new dynamic scene from a given world.
-    pub fn from_world(world: &World, registry: &TypeRegistryArc) -> Self {
+    pub fn from_world(world: &World, registry: &TypeRegistry) -> Self {
         let mut entities = Vec::new();
         let registry = registry.read();
 
@@ -362,7 +362,7 @@ impl ReflectScene {
         world: &mut World,
         entity_map: &mut EntityMap,
     ) -> Result<(), ReflectSceneSpawnError> {
-        let registry = world.resource::<TypeRegistryArc>().clone();
+        let registry = world.resource::<TypeRegistry>().clone();
         let registry = registry.read();
 
         for ReflectEntity { entity, components } in &self.entities {
@@ -437,11 +437,11 @@ where
 
 pub struct SceneSerializer<'a> {
     pub scene: &'a ReflectScene,
-    pub registry: &'a TypeRegistryArc,
+    pub registry: &'a TypeRegistry,
 }
 
 impl<'a> SceneSerializer<'a> {
-    pub fn new(scene: &'a ReflectScene, registry: &'a TypeRegistryArc) -> Self {
+    pub fn new(scene: &'a ReflectScene, registry: &'a TypeRegistry) -> Self {
         Self { scene, registry }
     }
 }
@@ -464,7 +464,7 @@ impl<'a> Serialize for SceneSerializer<'a> {
 
 pub struct EntitySerializer<'a> {
     pub entity: &'a ReflectEntity,
-    pub registry: &'a TypeRegistryArc,
+    pub registry: &'a TypeRegistry,
 }
 
 impl<'a> Serialize for EntitySerializer<'a> {
@@ -487,7 +487,7 @@ impl<'a> Serialize for EntitySerializer<'a> {
 
 pub struct ComponentsSerializer<'a> {
     pub components: &'a [Box<dyn Reflect>],
-    pub registry: &'a TypeRegistryArc,
+    pub registry: &'a TypeRegistry,
 }
 
 impl<'a> Serialize for ComponentsSerializer<'a> {
@@ -507,7 +507,7 @@ impl<'a> Serialize for ComponentsSerializer<'a> {
 }
 
 pub struct SceneDeserializer<'a> {
-    pub registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistryInternal,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for SceneDeserializer<'a> {
@@ -524,7 +524,7 @@ impl<'a, 'de> DeserializeSeed<'de> for SceneDeserializer<'a> {
 }
 
 struct SceneEntitySeqVisitor<'a> {
-    pub registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistryInternal,
 }
 
 impl<'a, 'de> serde::de::Visitor<'de> for SceneEntitySeqVisitor<'a> {
@@ -548,7 +548,7 @@ impl<'a, 'de> serde::de::Visitor<'de> for SceneEntitySeqVisitor<'a> {
 }
 
 pub struct SceneEntityDeserializer<'a> {
-    pub registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistryInternal,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for SceneEntityDeserializer<'a> {
@@ -579,7 +579,7 @@ pub const ENTITY_FIELD_ENTITY: &str = "entity";
 pub const ENTITY_FIELD_COMPONENTS: &str = "components";
 
 struct SceneEntityVisitor<'a> {
-    pub registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistryInternal,
 }
 
 impl<'a, 'de> serde::de::Visitor<'de> for SceneEntityVisitor<'a> {
@@ -629,7 +629,7 @@ impl<'a, 'de> serde::de::Visitor<'de> for SceneEntityVisitor<'a> {
 }
 
 pub struct ComponentVecDeserializer<'a> {
-    pub registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistryInternal,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for ComponentVecDeserializer<'a> {
@@ -645,7 +645,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ComponentVecDeserializer<'a> {
 }
 
 struct ComponentSeqVisitor<'a> {
-    pub registry: &'a TypeRegistry,
+    pub registry: &'a TypeRegistryInternal,
 }
 
 impl<'a, 'de> serde::de::Visitor<'de> for ComponentSeqVisitor<'a> {

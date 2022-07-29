@@ -83,7 +83,7 @@ impl ComponentEditor for ProxyMeta {
                     style.for_scrollbar(ui);
                     let scroll = ScrollArea::vertical().auto_shrink([false; 2]);
                     scroll.id_source("inspector icons").show(ui, |ui| {
-                        style.theme(ui);
+                        style.set_theme_visuals(ui);
                         style.scrollarea(ui);
                         ui.set_width(300.0);
                         ui.horizontal_wrapped(|ui| {

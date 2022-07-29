@@ -74,7 +74,13 @@ pub fn round_to_pixel(mut rect: egui::Rect, pixels_per_point: f32) -> egui::Rect
     rect
 }
 
-fn map_to_pixel_pos(mut pos: egui::Pos2, ppi: f32, map: fn(f32) -> f32) -> egui::Pos2 {
+pub fn map_to_pixel_pos(mut pos: egui::Pos2, ppi: f32, map: fn(f32) -> f32) -> egui::Pos2 {
+    pos.x = map_to_pixel(pos.x, ppi, map);
+    pos.y = map_to_pixel(pos.y, ppi, map);
+    pos
+}
+
+pub fn map_to_pixel_vec(mut pos: egui::Vec2, ppi: f32, map: fn(f32) -> f32) -> egui::Vec2 {
     pos.x = map_to_pixel(pos.x, ppi, map);
     pos.y = map_to_pixel(pos.y, ppi, map);
     pos

@@ -12,6 +12,7 @@ use bevy::render::{camera::RenderTarget, render_graph::RenderGraph, RenderApp};
 use bevy::window::{PresentMode, WindowId};
 use bevy::winit::{UpdateMode, WinitSettings};
 
+mod anima;
 mod app;
 mod component;
 mod context;
@@ -30,9 +31,12 @@ fn main() {
     app.insert_resource(ClearColor(Color::CRIMSON))
         .insert_resource(Msaa { samples: 1 })
         .insert_resource(WindowDescriptor {
+            width: 1920.0 / 2.0,
+            height: 1080.0 / 2.0,
             title: String::from("ShaderLab"),
             //mode: WindowMode::Fullscreen,
-            present_mode: PresentMode::Mailbox,
+            decorations: true,
+            present_mode: PresentMode::AutoNoVsync,
             ..default()
         })
         .init_resource::<AnyMap>()
@@ -53,6 +57,8 @@ fn main() {
         })
         .add_startup_system(setup)
         .add_system(crate::app::ui_root);
+
+    app.add_plugin(self::anima::Anima);
 
     {
         let render_app = app.sub_app_mut(RenderApp);
@@ -234,8 +240,9 @@ fn exampe_scene() -> World {
 }
 
 fn init_split_tree() -> crate::app::SplitTree {
+    use crate::anima::{Animation2d, TimelinePanel};
     use crate::app::*;
-    use crate::panel::{Hierarchy, Inspector, PlaceholderTab, Timeline};
+    use crate::panel::{FileBrowser, Hierarchy, Inspector, PlaceholderTab};
     use crate::scene::SceneTab;
 
     //type NodeTodo = PlaceholderTab;
@@ -247,17 +254,22 @@ fn init_split_tree() -> crate::app::SplitTree {
     let hierarchy = Tab::new(icon::OUTLINER, "Hierarchy", Hierarchy::default());
     let inspector = Tab::new(icon::PROPERTIES, "Inspector", Inspector::default());
 
-    //let files = Tab::new(icon::FILEBROWSER, "File Browser", FileBrowser::default());
-    //let assets = Tab::new(icon::ASSET_MANAGER, "Asset Manager", NodeTodo::default());
+    let files = Tab::new(icon::FILEBROWSER, "File Browser", FileBrowser::default());
+    let assets = Tab::new(
+        icon::ASSET_MANAGER,
+        "Asset Manager",
+        PlaceholderTab::default(),
+    );
 
-    let timeline = Tab::new(icon::TIME, "Timeline", Timeline::default());
+    let anim = Tab::new(icon::VIEW_ORTHO, "Animate 2d", Animation2d::default());
+    let timeline = Tab::new(icon::TIME, "Timeline", TimelinePanel::default());
 
-    let root = TreeNode::leaf_with(vec![scene, node_tree]);
+    let root = TreeNode::leaf_with(vec![anim, scene, node_tree]);
     let mut split_tree = SplitTree::new(root);
 
     let [a, b] = split_tree.split_tabs(NodeIndex::root(), Split::Right, 0.7, vec![inspector]);
-    let [_, _] = split_tree.split_tabs(a, Split::Below, 0.3, vec![timeline]);
-    let [_, _] = split_tree.split_tabs(b, Split::Below, 0.5, vec![hierarchy]);
+    let [_, _] = split_tree.split_tabs(a, Split::Below, 0.8, vec![timeline]);
+    let [_, _] = split_tree.split_tabs(b, Split::Below, 0.5, vec![hierarchy, files, assets]);
 
     split_tree
 }

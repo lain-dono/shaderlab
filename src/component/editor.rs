@@ -61,7 +61,7 @@ pub fn reflect_component_editor(
             top: 4.0,
             bottom: 6.0,
         };
-        Frame::none().margin(margin).show(ui, |ui| {
+        Frame::none().inner_margin(margin).show(ui, |ui| {
             crate::field::reflect(ui, reflect);
         });
     }
