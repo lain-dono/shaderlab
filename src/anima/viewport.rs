@@ -1,5 +1,5 @@
 use super::{grid::Grid, Armature, Controller};
-use crate::style::Style;
+use crate::ui::{icon, Style};
 use egui::*;
 
 #[derive(PartialEq)]
@@ -108,11 +108,11 @@ impl Animation2d {
                 ui.scope(|ui| {
                     ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
                     ui.columns(3, |ui| {
-                        let text = format!("{} Pose", crate::icon::POSE_HLT);
+                        let text = format!("{} Pose", icon::POSE_HLT);
                         ui[0].selectable_value(&mut self.mode, Mode::Pose, text);
-                        let text = format!("{} Edit", crate::icon::EDITMODE_HLT);
+                        let text = format!("{} Edit", icon::EDITMODE_HLT);
                         ui[1].selectable_value(&mut self.mode, Mode::Edit, text);
-                        let text = format!("{} Weight", crate::icon::WPAINT_HLT);
+                        let text = format!("{} Weight", icon::WPAINT_HLT);
                         ui[2].selectable_value(&mut self.mode, Mode::Weight, text);
                     });
                 });
@@ -164,11 +164,7 @@ impl Animation2d {
 
                         ui.vertical(|ui| {
                             fn toggle_key(ui: &mut Ui, cond: &mut bool) {
-                                let icon = if *cond {
-                                    crate::icon::KEYFRAME_HLT
-                                } else {
-                                    crate::icon::DOT
-                                };
+                                let icon = if *cond { icon::KEYFRAME_HLT } else { icon::DOT };
 
                                 let btn = Button::new(icon.to_string()).small().frame(false);
                                 if ui.add(btn).clicked() {

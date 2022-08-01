@@ -1,6 +1,5 @@
-use crate::component::ProxyTransform;
-use crate::component::ReflectProxy;
-use crate::context::ReflectEntityGetters;
+use super::component::{ProxyTransform, ReflectProxy};
+use super::context::ReflectEntityGetters;
 use anyhow::Result;
 use bevy::asset::{AssetEvent, AssetLoader, Assets, Handle, LoadContext, LoadedAsset};
 use bevy::ecs::{
@@ -425,14 +424,15 @@ pub fn serialize_ron<S>(serialize: S) -> Result<String, ron::Error>
 where
     S: Serialize,
 {
-    let pretty_config = ron::ser::PrettyConfig::default()
+    let config = ron::ser::PrettyConfig::default()
         .decimal_floats(true)
+        .struct_names(false)
         .indentor("  ".to_string())
         .new_line("\n".to_string());
-    let mut buf = Vec::new();
-    let mut ron_serializer = ron::ser::Serializer::new(&mut buf, Some(pretty_config), false)?;
-    serialize.serialize(&mut ron_serializer)?;
-    Ok(String::from_utf8(buf).unwrap())
+
+    ron::Options::default()
+        .with_default_extension(ron::extensions::Extensions::all())
+        .to_string_pretty(&serialize, config)
 }
 
 pub struct SceneSerializer<'a> {

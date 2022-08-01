@@ -1,13 +1,12 @@
-use super::{ReflectScene, SceneMapping};
-use crate::app::EditorPanel;
-use crate::component::ProxyPointLight;
-use crate::context::{EditorContext, ReflectEntityGetters};
-use crate::style::Style;
+use super::context::{EditorContext, ReflectEntityGetters};
+use super::{component::ProxyPointLight, ReflectScene, SceneMapping};
+use crate::ui::{icon, EditorPanel, EditorTab};
 use crate::util::anymap::AnyMap;
+use bevy::ecs::system::lifetimeless::{SQuery, SRes, SResMut};
+use bevy::ecs::system::SystemParamItem;
 use bevy::prelude::*;
 use bevy::reflect::TypeRegistry;
 use bevy::render::camera::CameraProjection;
-use bevy::window::WindowId;
 
 struct Drag {
     delta: egui::Vec2,
@@ -39,45 +38,32 @@ pub struct SceneTab {
     pub zsorting: Vec<(f32, egui::Pos2, usize)>,
 }
 
-impl SceneTab {
-    pub fn system(
-        mut context: ResMut<crate::shell::EguiContext>,
-        mut query: Query<(Entity, &EditorPanel, &mut Transform, &mut Self)>,
+impl EditorTab for SceneTab {
+    type Param = (
+        SRes<Handle<ReflectScene>>,
+        SResMut<AnyMap>,
+        SResMut<Assets<ReflectScene>>,
+        SRes<TypeRegistry>,
+        SResMut<AssetServer>,
+        SQuery<&'static mut Transform>,
+    );
 
-        scene: Res<Handle<ReflectScene>>,
-        mut state: ResMut<AnyMap>,
-        mut scenes: ResMut<Assets<ReflectScene>>,
-        types: Res<TypeRegistry>,
-        mut assets: ResMut<AssetServer>,
+    fn ui<'w>(
+        &mut self,
+        ui: &mut egui::Ui,
+        entity: Entity,
+        (scene, state, scenes, types, assets, transform): &mut SystemParamItem<'w, '_, Self::Param>,
     ) {
-        let scene = scenes.get_mut(&scene).unwrap();
-        let [ctx] = context.ctx_mut([WindowId::primary()]);
-        for (entity, viewport, mut transform, mut panel) in query.iter_mut() {
-            if let Some(viewport) = viewport.viewport {
-                let id = egui::Id::new("Scene").with(entity);
-                let mut ui = egui::Ui::new(
-                    ctx.clone(),
-                    egui::LayerId::background(),
-                    id,
-                    viewport,
-                    viewport,
-                );
+        let scene = scenes.get_mut(scene).unwrap();
+        let mut ctx = EditorContext {
+            scene,
+            state,
+            types,
+            assets,
+        };
 
-                let ectx = EditorContext {
-                    scene,
-                    state: &mut state,
-                    types: &types,
-                    assets: &mut assets,
-                };
+        let mut camera_view = transform.get_mut(entity).unwrap();
 
-                panel.ui(&mut ui, ectx, &mut transform);
-            }
-        }
-    }
-}
-
-impl SceneTab {
-    fn ui(&mut self, ui: &mut egui::Ui, mut ctx: EditorContext, camera_view: &mut Transform) {
         let scale = ui.ctx().pixels_per_point();
         let size_ui = ui.available_size_before_wrap();
         let size_px = size_ui * scale;
@@ -301,7 +287,7 @@ impl SceneTab {
                     painter.text(
                         center,
                         egui::Align2::CENTER_CENTER,
-                        crate::icon::LIGHT_POINT,
+                        icon::LIGHT_POINT,
                         egui::FontId::proportional(20.0),
                         color,
                     );

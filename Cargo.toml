@@ -29,7 +29,7 @@ sublime_fuzzy = "0.7.0"
 
 undo = "0.47"
 
-bevy = "0.8.0-dev"
+bevy = "0.8.0"
 
 smallvec = "1"
 
@@ -52,6 +52,3 @@ naga = { opt-level = 3 }
 winit = { opt-level = 3 }
 egui = { opt-level = 3 }
 bevy = { opt-level = 3 }
-
-[patch.crates-io]
-bevy = { git = 'https://github.com/bevyengine/bevy' }

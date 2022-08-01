@@ -1,7 +1,7 @@
 use super::{
     controller::PlayState, Animation, BoneTimeline, Controller, Curve, Keyframe, PlayControl,
 };
-use crate::style::Style;
+use crate::ui::{icon, Style};
 use egui::*;
 
 const LINE_HEIGHT: f32 = 20.0;
@@ -31,33 +31,33 @@ const SCALE_COLOR: Color32 = Color32::from_rgb(0xFF, 0x85, 0x1B);
 const ROW_WIDTH: f32 = 24.0;
 
 fn play_control(ui: &mut Ui, state: PlayState) -> Option<PlayControl> {
-    if ui.button(crate::icon::TRIA_LEFT_BAR.to_string()).clicked() {
+    if ui.button(icon::TRIA_LEFT_BAR.to_string()).clicked() {
         return Some(PlayControl::First);
     }
-    if ui.button(crate::icon::PREV_KEYFRAME.to_string()).clicked() {
+    if ui.button(icon::PREV_KEYFRAME.to_string()).clicked() {
         return Some(PlayControl::Prev);
     }
 
     if matches!(state, PlayState::PlayReverse) {
-        if ui.button(crate::icon::PAUSE.to_string()).clicked() {
+        if ui.button(icon::PAUSE.to_string()).clicked() {
             return Some(PlayControl::Pause);
         }
-    } else if ui.button(crate::icon::PLAY_REVERSE.to_string()).clicked() {
+    } else if ui.button(icon::PLAY_REVERSE.to_string()).clicked() {
         return Some(PlayControl::PlayReverse);
     }
 
     if matches!(state, PlayState::Play) {
-        if ui.button(crate::icon::PAUSE.to_string()).clicked() {
+        if ui.button(icon::PAUSE.to_string()).clicked() {
             return Some(PlayControl::Pause);
         }
-    } else if ui.button(crate::icon::PLAY.to_string()).clicked() {
+    } else if ui.button(icon::PLAY.to_string()).clicked() {
         return Some(PlayControl::Play);
     }
 
-    if ui.button(crate::icon::NEXT_KEYFRAME.to_string()).clicked() {
+    if ui.button(icon::NEXT_KEYFRAME.to_string()).clicked() {
         return Some(PlayControl::Next);
     }
-    if ui.button(crate::icon::TRIA_RIGHT_BAR.to_string()).clicked() {
+    if ui.button(icon::TRIA_RIGHT_BAR.to_string()).clicked() {
         return Some(PlayControl::Last);
     }
     None
@@ -249,9 +249,9 @@ impl BoneTimeline {
             }
 
             let open_icon = if self.open {
-                crate::icon::DISCLOSURE_TRI_DOWN
+                icon::DISCLOSURE_TRI_DOWN
             } else {
-                crate::icon::DISCLOSURE_TRI_RIGHT
+                icon::DISCLOSURE_TRI_RIGHT
             };
 
             let offset = bone_title_rect.left_center();
@@ -259,7 +259,7 @@ impl BoneTimeline {
             let pos = offset + vec2(8.0, 0.0);
             draw_icon_at(ui, pos, style.input_text, 14.0, open_icon);
             let pos = offset + vec2(22.0, 0.0);
-            draw_icon_at(ui, pos, style.input_text, 14.0, crate::icon::BONE_DATA);
+            draw_icon_at(ui, pos, style.input_text, 14.0, icon::BONE_DATA);
 
             let font_id = egui::FontId::proportional(14.0);
             let text = self.label.clone();
@@ -320,7 +320,7 @@ impl BoneTimeline {
             };
 
             let pos = rect.center();
-            draw_icon_at(ui, pos, color, KEYFRAME_SIZE, crate::icon::KEYFRAME_HLT);
+            draw_icon_at(ui, pos, color, KEYFRAME_SIZE, icon::KEYFRAME_HLT);
         }
 
         if self.open {

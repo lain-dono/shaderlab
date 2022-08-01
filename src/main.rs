@@ -2,8 +2,8 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::app::{AddEditorTab, EditorStage};
 use crate::scene::{ReflectScene, ReflectSceneSpawner};
+use crate::ui::AddEditorTab;
 use crate::util::anymap::AnyMap;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
@@ -12,17 +12,12 @@ use bevy::render::{render_graph::RenderGraph, RenderApp};
 use bevy::window::{PresentMode, WindowId};
 use bevy::winit::{UpdateMode, WinitSettings};
 
-mod anima;
-mod app;
-mod component;
-mod context;
-mod field;
-mod icon;
-mod panel;
-mod scene;
-mod shell;
-mod style;
-mod util;
+pub mod anima;
+pub mod scene;
+pub mod ui;
+pub mod util;
+
+mod workspace;
 
 fn main() {
     crate::util::enable_tracing();
@@ -51,20 +46,19 @@ fn main() {
                 max_wait: std::time::Duration::from_secs(60),
             },
         })
-        .add_plugins_with(DefaultPlugins, |group| group.disable::<LogPlugin>())
-        .add_plugin(crate::component::EditorPlugin)
-        .add_plugin(shell::EguiPlugin)
-        .add_plugin(scene::GizmoPlugin)
-        .add_startup_system(setup);
+        .add_plugins_with(DefaultPlugins, |group| group.disable::<LogPlugin>());
 
-    app.add_plugin(self::app::EditorUiPlugin);
+    app.add_plugin(crate::scene::component::EditorPlugin);
+    app.add_plugin(crate::scene::GizmoPlugin);
 
-    app.add_editor_tab::<self::panel::PlaceholderTab>();
+    app.add_plugin(self::ui::EditorUiPlugin);
+    app.add_startup_system(setup);
 
-    app.add_system_to_stage(EditorStage::Tabs, self::panel::FileBrowser::system);
-    app.add_system_to_stage(EditorStage::Tabs, self::panel::Inspector::system);
-    app.add_system_to_stage(EditorStage::Tabs, self::panel::Hierarchy::system);
-    app.add_system_to_stage(EditorStage::Tabs, self::scene::SceneTab::system);
+    app.add_editor_tab::<self::scene::FileBrowser>();
+    app.add_editor_tab::<self::scene::Hierarchy>();
+    app.add_editor_tab::<self::scene::Inspector>();
+    app.add_editor_tab::<self::scene::SceneTab>();
+
     app.add_plugin(self::anima::Anima);
 
     {
@@ -72,7 +66,7 @@ fn main() {
         let mut graph = render_app.world.resource_mut::<RenderGraph>();
 
         // add egui nodes
-        shell::setup_pipeline(&mut graph, WindowId::primary(), "ui_root");
+        crate::ui::shell::setup_pipeline(&mut graph, WindowId::primary(), "ui_root");
     }
 
     app.run();
@@ -81,12 +75,12 @@ fn main() {
 fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    mut context: ResMut<crate::shell::EguiContext>,
+    mut context: ResMut<crate::ui::shell::EguiContext>,
     mut spawner: ResMut<ReflectSceneSpawner>,
     mut scenes: ResMut<Assets<ReflectScene>>,
     type_registry: Res<TypeRegistryArc>,
 ) {
-    commands.insert_resource(crate::style::Style::default());
+    commands.insert_resource(crate::ui::Style::default());
 
     init_split_tree(&mut commands, &mut images);
 
@@ -98,57 +92,32 @@ fn setup(
 
     {
         let [ctx] = context.ctx_mut([bevy::window::WindowId::primary()]);
-        ctx.set_fonts(fonts_with_blender());
+        ctx.set_fonts(crate::ui::fonts_with_blender());
     }
 }
 
-pub struct SelectedEntity(pub Option<Entity>);
-
-pub fn fonts_with_blender() -> egui::FontDefinitions {
-    let font = egui::FontData::from_static(include_bytes!("icon.ttf"));
-
-    let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert("blender".to_owned(), font);
-    fonts.families.insert(
-        egui::FontFamily::Name("blender".into()),
-        vec!["Hack".to_owned(), "blender".into()],
-    );
-    fonts
-        .families
-        .get_mut(&egui::FontFamily::Proportional)
-        .unwrap()
-        .push("blender".to_owned());
-
-    fonts
-        .families
-        .get_mut(&egui::FontFamily::Monospace)
-        .unwrap()
-        .push("blender".to_owned());
-
-    fonts
-}
-
 fn exampe_scene() -> World {
-    use crate::component::{ProxyHandle, ProxyMeta, ProxyPointLight, ProxyTransform};
+    use crate::scene::component::{ProxyHandle, ProxyMeta, ProxyPointLight, ProxyTransform};
+    use crate::ui::icon;
     use bevy::ecs::world::EntityMut;
 
     fn new<'a>(builder: &'a mut WorldChildBuilder, prefix: &str, counter: usize) -> EntityMut<'a> {
         let icon = match counter % 14 {
-            0 => crate::icon::MESH_CONE,
-            1 => crate::icon::MESH_PLANE,
-            2 => crate::icon::MESH_CYLINDER,
-            3 => crate::icon::MESH_ICOSPHERE,
-            4 => crate::icon::MESH_CAPSULE,
-            5 => crate::icon::MESH_UVSPHERE,
-            6 => crate::icon::MESH_CIRCLE,
-            7 => crate::icon::MESH_MONKEY,
-            8 => crate::icon::MESH_TORUS,
-            9 => crate::icon::MESH_CUBE,
+            0 => icon::MESH_CONE,
+            1 => icon::MESH_PLANE,
+            2 => icon::MESH_CYLINDER,
+            3 => icon::MESH_ICOSPHERE,
+            4 => icon::MESH_CAPSULE,
+            5 => icon::MESH_UVSPHERE,
+            6 => icon::MESH_CIRCLE,
+            7 => icon::MESH_MONKEY,
+            8 => icon::MESH_TORUS,
+            9 => icon::MESH_CUBE,
 
-            10 => crate::icon::OUTLINER_OB_CAMERA,
-            11 => crate::icon::OUTLINER_OB_EMPTY,
-            12 => crate::icon::OUTLINER_OB_LIGHT,
-            13 => crate::icon::OUTLINER_OB_SPEAKER,
+            10 => icon::OUTLINER_OB_CAMERA,
+            11 => icon::OUTLINER_OB_EMPTY,
+            12 => icon::OUTLINER_OB_LIGHT,
+            13 => icon::OUTLINER_OB_SPEAKER,
 
             _ => unreachable!(),
         };
@@ -163,10 +132,9 @@ fn exampe_scene() -> World {
     }
 
     let mut world = World::new();
-    world.insert_resource(SelectedEntity(None));
 
     world.spawn().insert_bundle((
-        ProxyMeta::new(crate::icon::LIGHT_POINT, "Point Light"),
+        ProxyMeta::new(icon::LIGHT_POINT, "Point Light"),
         ProxyTransform {
             translation: Vec3::new(0.0, 0.0, 10.0),
             ..default()
@@ -177,7 +145,7 @@ fn exampe_scene() -> World {
     let mut counter = 0;
 
     for _ in 0..2 {
-        let icon = crate::icon::MESH_CUBE;
+        let icon = icon::MESH_CUBE;
         world
             .spawn()
             .insert_bundle((
@@ -228,9 +196,8 @@ fn exampe_scene() -> World {
 
 fn init_split_tree(commands: &mut Commands, images: &mut Assets<Image>) {
     use crate::anima::{Animation2d, TimelinePanel};
-    use crate::app::*;
-    use crate::panel::{FileBrowser, Hierarchy, Inspector, PlaceholderTab};
-    use crate::scene::SceneTab;
+    use crate::scene::{FileBrowser, Hierarchy, Inspector, SceneTab};
+    use crate::ui::*;
 
     trait SpawnTab {
         fn spawn_tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab;

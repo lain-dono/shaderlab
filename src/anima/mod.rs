@@ -14,10 +14,10 @@ pub use self::controller::{Controller, PlayControl};
 pub use self::math::Matrix;
 pub use self::viewport::Animation2d;
 
-use crate::app::EditorPanel;
-use crate::style::Style;
-use bevy::prelude::{default, Entity, Query, Res, ResMut, Time, With};
-use bevy::window::WindowId;
+use crate::ui::{AddEditorTab, EditorTab, Style};
+use bevy::ecs::system::lifetimeless::{SRes, SResMut};
+use bevy::ecs::system::SystemParamItem;
+use bevy::prelude::{default, Entity, Res, ResMut, Time};
 
 #[derive(Default, bevy::prelude::Component)]
 pub struct TimelinePanel;
@@ -27,11 +27,9 @@ pub struct Anima;
 
 impl bevy::app::Plugin for Anima {
     fn build(&self, app: &mut bevy::app::App) {
-        use bevy::prelude::*;
-
         app.add_startup_system(setup)
-            .add_system(timeline_panel.after(crate::app::ui_root_tabs_sync))
-            .add_system(viewport_panel.after(crate::app::ui_root_tabs_sync))
+            .add_editor_tab::<TimelinePanel>()
+            .add_editor_tab::<Animation2d>()
             .add_system(animate_rot);
     }
 }
@@ -46,49 +44,29 @@ pub fn setup(mut commands: bevy::prelude::Commands) {
     });
 }
 
-pub fn timeline_panel(
-    mut context: ResMut<crate::shell::EguiContext>,
-    style: Res<Style>,
-    query: Query<(Entity, &EditorPanel), With<TimelinePanel>>,
-    mut animation: ResMut<Animation>,
-    mut controller: ResMut<Controller>,
-) {
-    let [ctx] = context.ctx_mut([WindowId::primary()]);
-    for (entity, viewport) in query.iter() {
-        if let Some(viewport) = viewport.viewport {
-            let id = egui::Id::new("AnimaTimeline").with(entity);
-            let mut ui = egui::Ui::new(
-                ctx.clone(),
-                egui::LayerId::background(),
-                id,
-                viewport,
-                viewport,
-            );
-            self::timeline::run_ui(&mut controller, &mut ui, &style, &mut animation);
-        }
+impl EditorTab for TimelinePanel {
+    type Param = (SRes<Style>, SResMut<Animation>, SResMut<Controller>);
+
+    fn ui<'w>(
+        &mut self,
+        ui: &mut egui::Ui,
+        _entity: Entity,
+        (style, animation, controller): &mut SystemParamItem<'w, '_, Self::Param>,
+    ) {
+        self::timeline::run_ui(controller, ui, style, animation);
     }
 }
 
-pub fn viewport_panel(
-    mut context: ResMut<crate::shell::EguiContext>,
-    style: Res<Style>,
-    mut query: Query<(Entity, &EditorPanel, &mut Animation2d)>,
-    mut armature: ResMut<Armature>,
-    mut controller: ResMut<Controller>,
-) {
-    let [ctx] = context.ctx_mut([WindowId::primary()]);
-    for (entity, viewport, mut anima) in query.iter_mut() {
-        if let Some(viewport) = viewport.viewport {
-            let id = egui::Id::new("AnimaViewport").with(entity);
-            let mut ui = egui::Ui::new(
-                ctx.clone(),
-                egui::LayerId::background(),
-                id,
-                viewport,
-                viewport,
-            );
-            anima.run_ui(&mut ui, &style, &mut armature, &mut controller);
-        }
+impl EditorTab for Animation2d {
+    type Param = (SRes<Style>, SResMut<Armature>, SResMut<Controller>);
+
+    fn ui<'w>(
+        &mut self,
+        ui: &mut egui::Ui,
+        _entity: Entity,
+        (style, armature, controller): &mut SystemParamItem<'w, '_, Self::Param>,
+    ) {
+        self.run_ui(ui, style, armature, controller);
     }
 }
 
