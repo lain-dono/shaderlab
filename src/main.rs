@@ -17,7 +17,7 @@ pub mod scene;
 pub mod ui;
 pub mod util;
 
-mod workspace;
+//mod workspace;
 
 fn main() {
     crate::util::enable_tracing();
