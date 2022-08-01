@@ -1,17 +1,57 @@
-use crate::app::TabInner;
+use crate::app::EditorPanel;
 use crate::component::{reflect_component_editor, ComponentEditor, ReflectComponentEditor};
 use crate::context::EditorContext;
+use crate::scene::ReflectScene;
 use crate::style::Style;
+use crate::util::anymap::AnyMap;
+use bevy::prelude::*;
 use bevy::reflect::{FromType, Reflect, TypeRegistry};
+use bevy::window::WindowId;
 use egui::style::Margin;
 use egui::*;
 
-#[derive(Default)]
+#[derive(Default, Component)]
 pub struct Inspector {
     lock: Option<usize>,
 }
 
-impl TabInner for Inspector {
+impl Inspector {
+    pub fn system(
+        mut context: ResMut<crate::shell::EguiContext>,
+        style: Res<Style>,
+        mut query: Query<(Entity, &EditorPanel, &mut Self)>,
+
+        scene: Res<Handle<ReflectScene>>,
+        mut state: ResMut<AnyMap>,
+        mut scenes: ResMut<Assets<ReflectScene>>,
+        types: Res<TypeRegistry>,
+        mut assets: ResMut<AssetServer>,
+    ) {
+        let scene = scenes.get_mut(&scene).unwrap();
+        let [ctx] = context.ctx_mut([WindowId::primary()]);
+        for (entity, viewport, mut inspector) in query.iter_mut() {
+            if let Some(viewport) = viewport.viewport {
+                let id = egui::Id::new("Inspector").with(entity);
+                let mut ui = egui::Ui::new(
+                    ctx.clone(),
+                    egui::LayerId::background(),
+                    id,
+                    viewport,
+                    viewport,
+                );
+
+                let ectx = EditorContext {
+                    scene,
+                    state: &mut state,
+                    types: &types,
+                    assets: &mut assets,
+                };
+
+                inspector.ui(&mut ui, &style, ectx);
+            }
+        }
+    }
+
     fn ui(&mut self, ui: &mut Ui, style: &Style, mut ctx: EditorContext) {
         let rect = ui.available_rect_before_wrap();
         ui.painter().rect_filled(rect, 0.0, style.panel);

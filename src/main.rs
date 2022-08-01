@@ -2,13 +2,13 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::app::{AddEditorTab, EditorStage};
 use crate::scene::{ReflectScene, ReflectSceneSpawner};
 use crate::util::anymap::AnyMap;
-use bevy::core_pipeline::clear_color::ClearColorConfig;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::reflect::TypeRegistryArc;
-use bevy::render::{camera::RenderTarget, render_graph::RenderGraph, RenderApp};
+use bevy::render::{render_graph::RenderGraph, RenderApp};
 use bevy::window::{PresentMode, WindowId};
 use bevy::winit::{UpdateMode, WinitSettings};
 
@@ -31,8 +31,8 @@ fn main() {
     app.insert_resource(ClearColor(Color::CRIMSON))
         .insert_resource(Msaa { samples: 1 })
         .insert_resource(WindowDescriptor {
-            width: 1920.0 / 2.0,
-            height: 1080.0 / 2.0,
+            //width: 1920.0 / 2.0,
+            //height: 1080.0 / 2.0,
             title: String::from("ShaderLab"),
             //mode: WindowMode::Fullscreen,
             decorations: true,
@@ -40,10 +40,6 @@ fn main() {
             ..default()
         })
         .init_resource::<AnyMap>()
-        .add_plugins_with(DefaultPlugins, |group| group.disable::<LogPlugin>())
-        .add_plugin(crate::component::EditorPlugin)
-        .add_plugin(shell::EguiPlugin)
-        .add_plugin(scene::GizmoPlugin)
         // Optimal power saving and present mode settings for desktop apps.
         .insert_resource(WinitSettings {
             return_from_run: true,
@@ -55,9 +51,20 @@ fn main() {
                 max_wait: std::time::Duration::from_secs(60),
             },
         })
-        .add_startup_system(setup)
-        .add_system(crate::app::ui_root);
+        .add_plugins_with(DefaultPlugins, |group| group.disable::<LogPlugin>())
+        .add_plugin(crate::component::EditorPlugin)
+        .add_plugin(shell::EguiPlugin)
+        .add_plugin(scene::GizmoPlugin)
+        .add_startup_system(setup);
 
+    app.add_plugin(self::app::EditorUiPlugin);
+
+    app.add_editor_tab::<self::panel::PlaceholderTab>();
+
+    app.add_system_to_stage(EditorStage::Tabs, self::panel::FileBrowser::system);
+    app.add_system_to_stage(EditorStage::Tabs, self::panel::Inspector::system);
+    app.add_system_to_stage(EditorStage::Tabs, self::panel::Hierarchy::system);
+    app.add_system_to_stage(EditorStage::Tabs, self::scene::SceneTab::system);
     app.add_plugin(self::anima::Anima);
 
     {
@@ -79,29 +86,9 @@ fn setup(
     mut scenes: ResMut<Assets<ReflectScene>>,
     type_registry: Res<TypeRegistryArc>,
 ) {
-    // The main pass camera.
-    {
-        let image_handle = crate::scene::SceneRenderTarget::insert(&mut commands, &mut images);
-
-        let target = RenderTarget::Image(image_handle);
-        let gray = 0x2B as f32 / 255.0;
-        let clear_color = Color::rgba(gray, gray, gray, 1.0);
-
-        commands.spawn_bundle(Camera3dBundle {
-            camera_3d: Camera3d {
-                clear_color: ClearColorConfig::Custom(clear_color),
-                ..default()
-            },
-            camera: Camera {
-                target,
-                ..default()
-            },
-            ..default()
-        });
-    }
-
     commands.insert_resource(crate::style::Style::default());
-    commands.insert_resource(init_split_tree());
+
+    init_split_tree(&mut commands, &mut images);
 
     let world = exampe_scene();
     let scene = ReflectScene::from_world(&world, &type_registry);
@@ -239,30 +226,43 @@ fn exampe_scene() -> World {
     world
 }
 
-fn init_split_tree() -> crate::app::SplitTree {
+fn init_split_tree(commands: &mut Commands, images: &mut Assets<Image>) {
     use crate::anima::{Animation2d, TimelinePanel};
     use crate::app::*;
     use crate::panel::{FileBrowser, Hierarchy, Inspector, PlaceholderTab};
     use crate::scene::SceneTab;
 
-    //type NodeTodo = PlaceholderTab;
+    trait SpawnTab {
+        fn spawn_tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab;
 
-    let node_tree = PlaceholderTab::default();
-    let node_tree = Tab::new(icon::NODETREE, "Node Tree", node_tree);
-    let scene = Tab::new(icon::VIEW3D, "Scene", SceneTab::default());
+        fn spawn_placeholder(&mut self, icon: char, title: &str) -> Tab {
+            self.spawn_tab(icon, title, PlaceholderTab::default())
+        }
+    }
 
-    let hierarchy = Tab::new(icon::OUTLINER, "Hierarchy", Hierarchy::default());
-    let inspector = Tab::new(icon::PROPERTIES, "Inspector", Inspector::default());
+    impl<'s, 'w> SpawnTab for Commands<'s, 'w> {
+        fn spawn_tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab {
+            let entity = self
+                .spawn()
+                .insert_bundle((EditorPanel::default(), tab))
+                .id();
+            Tab::new(icon, title, entity)
+        }
+    }
 
-    let files = Tab::new(icon::FILEBROWSER, "File Browser", FileBrowser::default());
-    let assets = Tab::new(
-        icon::ASSET_MANAGER,
-        "Asset Manager",
-        PlaceholderTab::default(),
-    );
+    let node_tree = commands.spawn_placeholder(icon::NODETREE, "Node Tree");
 
-    let anim = Tab::new(icon::VIEW_ORTHO, "Animate 2d", Animation2d::default());
-    let timeline = Tab::new(icon::TIME, "Timeline", TimelinePanel::default());
+    let scene_entity = SceneTab::spawn(commands, images);
+    let scene = Tab::new(icon::VIEW3D, "Scene", scene_entity);
+
+    let hierarchy = commands.spawn_tab(icon::OUTLINER, "Hierarchy", Hierarchy::default());
+    let inspector = commands.spawn_tab(icon::PROPERTIES, "Inspector", Inspector::default());
+    let files = commands.spawn_tab(icon::FILEBROWSER, "File Browser", FileBrowser::default());
+
+    let assets = commands.spawn_placeholder(icon::ASSET_MANAGER, "Asset Manager");
+
+    let anim = commands.spawn_tab(icon::VIEW_ORTHO, "Animate 2d", Animation2d::default());
+    let timeline = commands.spawn_tab(icon::TIME, "Timeline", TimelinePanel::default());
 
     let root = TreeNode::leaf_with(vec![anim, scene, node_tree]);
     let mut split_tree = SplitTree::new(root);
@@ -271,5 +271,5 @@ fn init_split_tree() -> crate::app::SplitTree {
     let [_, _] = split_tree.split_tabs(a, Split::Below, 0.8, vec![timeline]);
     let [_, _] = split_tree.split_tabs(b, Split::Below, 0.5, vec![hierarchy, files, assets]);
 
-    split_tree
+    commands.insert_resource(split_tree);
 }

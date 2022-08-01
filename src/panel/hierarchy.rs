@@ -1,20 +1,61 @@
-use crate::app::TabInner;
+use crate::app::EditorPanel;
 use crate::component::ProxyMeta;
 use crate::context::{EditorContext, ReflectEntityGetters};
-use crate::scene::SceneMapping;
+use crate::scene::{ReflectScene, SceneMapping};
 use crate::style::Style;
-use bevy::prelude::{Entity, Parent};
+use crate::util::anymap::AnyMap;
+use bevy::prelude::*;
+use bevy::reflect::TypeRegistry;
+use bevy::window::WindowId;
 use egui::style::Margin;
 use egui::widgets::TextEdit;
 use egui::*;
 use std::borrow::Cow;
 
-#[derive(Default)]
+#[derive(Default, Component)]
 pub struct Hierarchy {
     search: String,
 }
 
-impl TabInner for Hierarchy {
+impl Hierarchy {
+    pub fn system(
+        mut context: ResMut<crate::shell::EguiContext>,
+        style: Res<Style>,
+        mut query: Query<(Entity, &EditorPanel, &mut Self)>,
+
+        scene: Res<Handle<ReflectScene>>,
+        mut state: ResMut<AnyMap>,
+        mut scenes: ResMut<Assets<ReflectScene>>,
+        types: Res<TypeRegistry>,
+        mut assets: ResMut<AssetServer>,
+    ) {
+        let scene = scenes.get_mut(&scene).unwrap();
+        let [ctx] = context.ctx_mut([WindowId::primary()]);
+        for (entity, viewport, mut panel) in query.iter_mut() {
+            if let Some(viewport) = viewport.viewport {
+                let id = egui::Id::new("Hierarchy").with(entity);
+                let mut ui = egui::Ui::new(
+                    ctx.clone(),
+                    egui::LayerId::background(),
+                    id,
+                    viewport,
+                    viewport,
+                );
+
+                let ectx = EditorContext {
+                    scene,
+                    state: &mut state,
+                    types: &types,
+                    assets: &mut assets,
+                };
+
+                panel.ui(&mut ui, &style, ectx);
+            }
+        }
+    }
+}
+
+impl Hierarchy {
     fn ui(&mut self, ui: &mut Ui, style: &Style, mut ctx: EditorContext) {
         let rect = ui.available_rect_before_wrap();
         ui.painter().rect_filled(rect, 0.0, style.panel);
@@ -95,7 +136,7 @@ fn item_widget(level: usize, entity: usize, ui: &mut Ui, style: &Style, ctx: &mu
     let label_pos = rect.left_center() + vec2(36.0, 0.0) + offset;
     let hide_icon_pos = rect.right_center() - vec2(16.0, 0.0);
 
-    let cursor = CursorIcon::PointingHand;
+    let cursor = egui::CursorIcon::PointingHand;
     let sense = Sense::click();
 
     let editor = ctx.get(entity).unwrap();

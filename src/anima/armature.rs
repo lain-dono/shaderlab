@@ -3,7 +3,7 @@ use egui::*;
 
 pub struct Slot {
     pub name: String,
-    pub bone: usize,
+    pub bone: u32,
 }
 
 bitflags::bitflags! {
@@ -17,7 +17,7 @@ pub struct Bone {
     pub rotation: f32,
     pub location: Pos2,
     pub scale: Vec2,
-    pub skew: Vec2,
+    pub shear: Vec2,
 
     pub color: u32,
     pub length: f32,
@@ -32,7 +32,7 @@ impl Default for Bone {
             rotation: 0.0,
             location: pos2(0.0, 0.0),
             scale: vec2(1.0, 1.0),
-            skew: vec2(0.0, 0.0),
+            shear: vec2(0.0, 0.0),
 
             color: 0xFFFFFFFF,
             length: 0.0,
@@ -45,8 +45,8 @@ impl Default for Bone {
 
 impl Bone {
     pub fn local_matrix(&self) -> Matrix {
-        let (sx, cx) = (self.rotation - self.skew.x).sin_cos();
-        let (sy, cy) = (self.rotation + self.skew.y).sin_cos();
+        let (sx, cx) = (self.rotation - self.shear.x).sin_cos();
+        let (sy, cy) = (self.rotation + self.shear.y).sin_cos();
         let sx = -sx;
 
         Matrix {

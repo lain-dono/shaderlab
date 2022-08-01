@@ -32,15 +32,6 @@ pub unsafe fn fuck_mut<'a, T: ?Sized>(ptr: &mut T) -> &'a mut T {
     &mut *(ptr as *mut T)
 }
 
-// TODO: Stable since Rust version 1.62.0
-pub fn total_cmp(lhs: &f32, rhs: &f32) -> std::cmp::Ordering {
-    let mut lhs = lhs.to_bits() as i32;
-    let mut rhs = rhs.to_bits() as i32;
-    lhs ^= (((lhs >> 31) as u32) >> 1) as i32;
-    rhs ^= (((rhs >> 31) as u32) >> 1) as i32;
-    lhs.cmp(&rhs)
-}
-
 pub fn linear_from_srgb_f64(r: f64, g: f64, b: f64) -> [f64; 3] {
     let cutoff = [r < 0.04045, g < 0.04045, b < 0.04045];
     let lower = [r / 12.92, g / 12.92, b / 12.92];

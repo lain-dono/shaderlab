@@ -1,17 +1,95 @@
-use crate::context::EditorContext;
-use crate::scene::ReflectScene;
 use crate::style::Style;
-use crate::util::anymap::AnyMap;
+use bevy::ecs::system::{StaticSystemParam, SystemParam, SystemParamItem};
 use bevy::prelude::*;
-use bevy::reflect::TypeRegistry;
 use bevy::window::WindowId;
 use egui::Rect;
 
-//pub mod backend;
-//pub mod panel;
 pub mod tabs;
 
-pub use self::tabs::{NodeIndex, Split, SplitTree, Tab, TabInner, TreeNode};
+pub use self::tabs::{NodeIndex, Split, SplitTree, Tab, TreeNode};
+
+pub trait AddEditorTab {
+    fn add_editor_tab<T: EditorTab + 'static>(&mut self) -> &mut Self;
+}
+
+impl AddEditorTab for bevy::app::App {
+    fn add_editor_tab<T: EditorTab + 'static>(&mut self) -> &mut Self {
+        self.add_system_to_stage(EditorStage::Tabs, editor_tab::<T>);
+        self
+    }
+}
+
+pub trait EditorTab: Component {
+    type Param: SystemParam;
+
+    fn ui<'w>(
+        &mut self,
+        ui: &mut egui::Ui,
+        entity: Entity,
+        query: &mut SystemParamItem<'w, '_, Self::Param>,
+    );
+}
+
+pub fn editor_tab<T: EditorTab>(
+    mut context: ResMut<crate::shell::EguiContext>,
+    mut panel_view: Query<(Entity, &EditorPanel, &mut T)>,
+    query: StaticSystemParam<T::Param>,
+) where
+    T::Param: 'static,
+{
+    let [ctx] = context.ctx_mut([WindowId::primary()]);
+    let mut query = query.into_inner();
+    for (entity, viewport, mut tab) in panel_view.iter_mut() {
+        if let Some(viewport) = viewport.viewport {
+            let mut ui = egui::Ui::new(
+                ctx.clone(),
+                egui::LayerId::background(),
+                egui::Id::new(entity),
+                viewport,
+                viewport,
+            );
+            tab.ui(&mut ui, entity, &mut query);
+        }
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, StageLabel)]
+pub enum EditorStage {
+    Root,
+    Tabs,
+    Finish,
+}
+
+pub struct EditorUiPlugin;
+
+impl bevy::app::Plugin for EditorUiPlugin {
+    fn build(&self, app: &mut bevy::app::App) {
+        use bevy::prelude::*;
+
+        app.add_stage_after(
+            CoreStage::PreUpdate,
+            EditorStage::Root,
+            SystemStage::parallel(),
+        );
+
+        app.add_stage_after(
+            CoreStage::Update,
+            EditorStage::Tabs,
+            SystemStage::parallel(),
+        );
+
+        app.add_stage_before(
+            CoreStage::PostUpdate,
+            EditorStage::Finish,
+            SystemStage::parallel(),
+        );
+
+        app.init_resource::<SharedData>()
+            .add_system_to_stage(EditorStage::Root, ui_root)
+            .add_system_to_stage(EditorStage::Finish, ui_root_tabs_sync)
+            .add_system_to_stage(EditorStage::Finish, ui_root_finish.after(ui_root_tabs_sync));
+    }
+}
 
 struct TabWidget<'a> {
     label: String,
@@ -88,7 +166,7 @@ impl HoverData {
         let position = pts
             .into_iter()
             .enumerate()
-            .min_by(|(_, lhs), (_, rhs)| crate::util::total_cmp(lhs, rhs))
+            .min_by(|(_, lhs), (_, rhs)| f32::total_cmp(lhs, rhs))
             .map(|(idx, _)| idx)
             .unwrap();
 
@@ -105,20 +183,20 @@ impl HoverData {
     }
 }
 
+#[derive(Default)]
+pub struct SharedData {
+    drag: Option<(NodeIndex, usize)>,
+    hover: Option<HoverData>,
+}
+
 #[allow(clippy::only_used_in_recursion)]
 pub fn ui_root(
     mut drag_start: Local<Option<egui::Pos2>>,
     mut context: ResMut<crate::shell::EguiContext>,
     mut tree: ResMut<SplitTree>,
-    scene: Res<Handle<ReflectScene>>,
-    mut state: ResMut<AnyMap>,
-    mut scenes: ResMut<Assets<ReflectScene>>,
     style: Res<Style>,
-    type_registry: Res<TypeRegistry>,
-    mut assets: ResMut<AssetServer>,
+    mut shared: ResMut<SharedData>,
 ) {
-    let scene = scenes.get_mut(&scene).unwrap();
-
     let (rect, mut ui) = {
         let [ctx] = context.ctx_mut([WindowId::primary()]);
 
@@ -223,8 +301,8 @@ pub fn ui_root(
 
     tree[NodeIndex::root()].set_rect(rect);
 
-    let mut drag_data = None;
-    let mut hover_data = None;
+    shared.drag = None;
+    shared.hover = None;
 
     let pixels_per_point = ui.ctx().pixels_per_point();
     let px = pixels_per_point.recip();
@@ -315,7 +393,7 @@ pub fn ui_root(
                                     if delta.x.abs() > 30.0 || delta.y.abs() > 6.0 {
                                         ui.ctx().translate_layer(layer_id, delta);
 
-                                        drag_data = Some((tree_index, tab_index));
+                                        shared.drag = Some((tree_index, tab_index));
                                     }
                                 }
 
@@ -335,27 +413,14 @@ pub fn ui_root(
                 }
 
                 // tab body
-                if let Some(tab) = tabs.get_mut(*active) {
-                    let top_y = rect.min.y + height_topbar;
-                    let rect = rect.intersect(Rect::everything_below(top_y));
-                    let rect = crate::util::expand_to_pixel(rect, pixels_per_point);
-
-                    *viewport = rect;
-
-                    let ctx = EditorContext {
-                        scene,
-                        state: &mut state,
-                        types: &type_registry,
-                        assets: &mut assets,
-                    };
-
-                    let mut ui = ui.child_ui(rect, Default::default());
-                    tab.inner.ui(&mut ui, &style, ctx);
-                }
+                let top_y = rect.min.y + height_topbar;
+                let rect = rect.intersect(Rect::everything_below(top_y));
+                let rect = crate::util::expand_to_pixel(rect, pixels_per_point);
+                *viewport = rect;
 
                 let is_being_dragged = ui.memory().is_anything_being_dragged();
                 if is_being_dragged && full_response.hovered() {
-                    hover_data = ui.input().pointer.hover_pos().map(|pointer| HoverData {
+                    shared.hover = ui.input().pointer.hover_pos().map(|pointer| HoverData {
                         rect,
                         dst: tree_index,
                         tabs: tabs_response.hovered().then(|| tabs_response.rect),
@@ -365,8 +430,48 @@ pub fn ui_root(
             }
         }
     }
+}
 
-    if let (Some((src, tab_index)), Some(hover)) = (drag_data, hover_data) {
+#[derive(Component, Default)]
+pub struct EditorPanel {
+    pub viewport: Option<Rect>,
+}
+
+pub fn ui_root_tabs_sync(tree: Res<SplitTree>, mut panels: Query<&mut EditorPanel>) {
+    for mut panel in panels.iter_mut() {
+        panel.viewport = None;
+    }
+
+    for node in tree.iter() {
+        if let TreeNode::Leaf {
+            tabs,
+            active,
+            viewport,
+            ..
+        } = node
+        {
+            for (tab_index, tab) in tabs.iter().enumerate() {
+                if let Ok(mut panel) = panels.get_mut(tab.entity) {
+                    *panel = EditorPanel {
+                        viewport: (tab_index == *active).then(|| *viewport),
+                        //node: NodeIndex(node_index),
+                        //tab: tab_index,
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn ui_root_finish(
+    mut context: ResMut<crate::shell::EguiContext>,
+    mut tree: ResMut<SplitTree>,
+    style: Res<Style>,
+    shared: Res<SharedData>,
+) {
+    let [ctx] = context.ctx_mut([WindowId::primary()]);
+
+    if let (Some((src, tab_index)), Some(hover)) = (shared.drag, &shared.hover) {
         let dst = hover.dst;
 
         if tree[src].is_leaf() && tree[dst].is_leaf() {
@@ -374,10 +479,10 @@ pub fn ui_root(
 
             let id = egui::Id::new("helper");
             let layer_id = egui::LayerId::new(egui::Order::Foreground, id);
-            let painter = ui.ctx().layer_painter(layer_id);
+            let painter = ctx.layer_painter(layer_id);
             painter.rect_filled(helper, 0.0, style.selection);
 
-            if ui.input().pointer.any_released() {
+            if ctx.input().pointer.any_released() {
                 if let TreeNode::Leaf { active, .. } = &mut tree[src] {
                     if *active >= tab_index {
                         *active = active.saturating_sub(1);

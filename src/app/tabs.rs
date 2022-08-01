@@ -1,16 +1,10 @@
-use crate::context::EditorContext;
-use crate::style::Style;
-use egui::{Rect, Ui};
-
-pub trait TabInner: Send + Sync + downcast_rs::Downcast {
-    fn ui(&mut self, _ui: &mut Ui, _style: &Style, _ctx: EditorContext);
-}
-downcast_rs::impl_downcast!(TabInner);
+use bevy::prelude::Entity;
+use egui::Rect;
 
 pub struct Tab {
     pub icon: char,
     pub title: String,
-    pub inner: Box<dyn TabInner>,
+    pub entity: Entity,
 }
 
 impl ToString for Tab {
@@ -20,11 +14,11 @@ impl ToString for Tab {
 }
 
 impl Tab {
-    pub fn new(icon: char, title: impl Into<String>, inner: impl TabInner + 'static) -> Self {
+    pub fn new(icon: char, title: impl Into<String>, entity: Entity) -> Self {
         Self {
             icon,
             title: title.into(),
-            inner: Box::new(inner),
+            entity,
         }
     }
 }
@@ -197,24 +191,6 @@ impl std::ops::IndexMut<NodeIndex> for SplitTree {
 impl SplitTree {
     pub fn new(root: TreeNode) -> Self {
         Self { tree: vec![root] }
-    }
-
-    pub fn find_active<T: TabInner>(&mut self) -> Option<(Rect, &mut T)> {
-        self.tree.iter_mut().find_map(|node| {
-            if let TreeNode::Leaf {
-                tabs,
-                active,
-                viewport,
-                ..
-            } = node
-            {
-                tabs.get_mut(*active)
-                    .and_then(|tab| tab.inner.downcast_mut::<T>())
-                    .map(|tab| (*viewport, tab))
-            } else {
-                None
-            }
-        })
     }
 
     #[inline]

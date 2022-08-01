@@ -8,7 +8,7 @@ pub use self::{
         ReflectSceneSpawner, SceneMapping,
     },
     gizmo::{GizmoPlugin, GIZMO_DRIVER},
-    tab::{SceneRenderTarget, SceneTab},
+    tab::SceneTab,
 };
 
 use bevy::prelude::*;
@@ -22,7 +22,6 @@ impl Plugin for ScenePlugin {
         app.add_asset::<ReflectScene>()
             .init_asset_loader::<ReflectSceneLoader>()
             .init_resource::<ReflectSceneSpawner>()
-            .insert_resource(SceneRenderTarget(None))
             .add_system_to_stage(
                 CoreStage::PreUpdate,
                 scene_spawner_system.exclusive_system().at_end(),
@@ -53,19 +52,31 @@ pub fn scene_spawner_system(world: &mut World) {
 }
 
 pub fn update_scene_render_target(
-    mut tree: ResMut<crate::app::SplitTree>,
     mut egui_context: ResMut<crate::shell::EguiContext>,
-    scene_render_target: Res<SceneRenderTarget>,
     mut images: ResMut<Assets<Image>>,
-    mut camera: Query<(&mut Transform, &mut Projection), With<bevy::render::camera::Camera>>,
+    mut query: Query<(
+        &mut Transform,
+        &mut Projection,
+        &mut SceneTab,
+        &crate::app::EditorPanel,
+        &bevy::render::camera::Camera,
+    )>,
 ) {
     let [ctx] = egui_context.ctx_mut([bevy::window::WindowId::primary()]);
+    let ppi = ctx.pixels_per_point();
 
-    if let Some(handle) = scene_render_target.0.as_ref() {
+    for (mut transform, mut projection, mut scene, tab, camera) in query.iter_mut() {
+        let handle = if let bevy::render::camera::RenderTarget::Image(handle) = &camera.target {
+            handle
+        } else {
+            continue;
+        };
+
         if let Some(image) = images.get_mut(handle) {
-            if let Some((viewport, tab)) = tree.find_active::<SceneTab>() {
-                let width = (viewport.width() * ctx.pixels_per_point()) as u32;
-                let height = (viewport.height() * ctx.pixels_per_point()) as u32;
+            if let Some(viewport) = tab.viewport {
+                let width = (viewport.width() * ppi) as u32;
+                let height = (viewport.height() * ppi) as u32;
+                scene.texture_id = Some(egui_context.add_image(handle.clone_weak()));
 
                 image.resize(wgpu::Extent3d {
                     width: width.max(1),
@@ -73,12 +84,7 @@ pub fn update_scene_render_target(
                     ..default()
                 });
 
-                tab.texture_id = Some(egui_context.add_image(handle.clone_weak()));
-
-                for (mut transform, mut projection) in camera.iter_mut() {
-                    *transform = tab.camera_view;
-                    *projection = Projection::Perspective(tab.camera_proj.clone());
-                }
+                *projection = Projection::Perspective(scene.camera_proj.clone());
             }
         }
     }

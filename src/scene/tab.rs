@@ -1,11 +1,13 @@
-use super::SceneMapping;
-use crate::app::TabInner;
+use super::{ReflectScene, SceneMapping};
+use crate::app::EditorPanel;
 use crate::component::ProxyPointLight;
 use crate::context::{EditorContext, ReflectEntityGetters};
 use crate::style::Style;
+use crate::util::anymap::AnyMap;
 use bevy::prelude::*;
+use bevy::reflect::TypeRegistry;
 use bevy::render::camera::CameraProjection;
-use bevy::utils::HashMap;
+use bevy::window::WindowId;
 
 struct Drag {
     delta: egui::Vec2,
@@ -26,10 +28,10 @@ struct InputState {
     right: bool,
 }
 
+#[derive(Component)]
 pub struct SceneTab {
     pub texture_id: Option<egui::TextureId>,
     pub camera_proj: PerspectiveProjection,
-    pub camera_view: Transform,
 
     pub yew: f32,
     pub pitch: f32,
@@ -37,23 +39,45 @@ pub struct SceneTab {
     pub zsorting: Vec<(f32, egui::Pos2, usize)>,
 }
 
-impl Default for SceneTab {
-    fn default() -> Self {
-        Self {
-            texture_id: None,
-            camera_proj: PerspectiveProjection::default(),
-            camera_view: Transform::from_translation(Vec3::new(0.0, 5.0, 15.0)),
+impl SceneTab {
+    pub fn system(
+        mut context: ResMut<crate::shell::EguiContext>,
+        mut query: Query<(Entity, &EditorPanel, &mut Transform, &mut Self)>,
 
-            yew: 0.0,
-            pitch: 0.0,
+        scene: Res<Handle<ReflectScene>>,
+        mut state: ResMut<AnyMap>,
+        mut scenes: ResMut<Assets<ReflectScene>>,
+        types: Res<TypeRegistry>,
+        mut assets: ResMut<AssetServer>,
+    ) {
+        let scene = scenes.get_mut(&scene).unwrap();
+        let [ctx] = context.ctx_mut([WindowId::primary()]);
+        for (entity, viewport, mut transform, mut panel) in query.iter_mut() {
+            if let Some(viewport) = viewport.viewport {
+                let id = egui::Id::new("Scene").with(entity);
+                let mut ui = egui::Ui::new(
+                    ctx.clone(),
+                    egui::LayerId::background(),
+                    id,
+                    viewport,
+                    viewport,
+                );
 
-            zsorting: Vec::new(),
+                let ectx = EditorContext {
+                    scene,
+                    state: &mut state,
+                    types: &types,
+                    assets: &mut assets,
+                };
+
+                panel.ui(&mut ui, ectx, &mut transform);
+            }
         }
     }
 }
 
-impl TabInner for SceneTab {
-    fn ui(&mut self, ui: &mut egui::Ui, _style: &Style, mut ctx: EditorContext) {
+impl SceneTab {
+    fn ui(&mut self, ui: &mut egui::Ui, mut ctx: EditorContext, camera_view: &mut Transform) {
         let scale = ui.ctx().pixels_per_point();
         let size_ui = ui.available_size_before_wrap();
         let size_px = size_ui * scale;
@@ -107,15 +131,15 @@ impl TabInner for SceneTab {
                     match drag.button {
                         egui::PointerButton::Middle => {
                             let pan = delta * egui::Vec2::new(fov * ratio, fov);
-                            let right = self.camera_view.rotation * Vec3::X * -pan.x;
-                            let up = self.camera_view.rotation * Vec3::Y * pan.y;
-                            self.camera_view.translation += (right + up) * pan_speed;
+                            let right = camera_view.rotation * Vec3::X * -pan.x;
+                            let up = camera_view.rotation * Vec3::Y * pan.y;
+                            camera_view.translation += (right + up) * pan_speed;
                         }
                         egui::PointerButton::Secondary => {
                             self.yew += delta.x * fov * ratio * rot_speed;
                             self.pitch += delta.y * fov * rot_speed;
 
-                            self.camera_view.rotation =
+                            camera_view.rotation =
                                 Quat::from_euler(EulerRot::YXZ, self.yew, self.pitch, 0.0);
                         }
                         _ => (),
@@ -134,12 +158,12 @@ impl TabInner for SceneTab {
                     movement -= Vec3::Z * state.scroll;
                 }
 
-                let movement = self.camera_view.rotation * movement;
-                self.camera_view.translation += movement * input.predicted_dt * mov_speed;
+                let movement = camera_view.rotation * movement;
+                camera_view.translation += movement * input.predicted_dt * mov_speed;
             }
 
             let proj = self.camera_proj.get_projection_matrix();
-            let view = self.camera_view.compute_matrix().inverse();
+            let view = camera_view.compute_matrix().inverse();
             let world_to_ndc = proj * view;
             let ndc_to_world = view.inverse() * proj.inverse();
 
@@ -179,7 +203,7 @@ impl TabInner for SceneTab {
 
             // reverse z-sorting
             self.zsorting
-                .sort_by(|(az, _, _), (bz, _, _)| crate::util::total_cmp(bz, az));
+                .sort_by(|(az, _, _), (bz, _, _)| f32::total_cmp(bz, az));
 
             let world_to_screen = |world: Vec3| {
                 let ndc = world_to_ndc.project_point3(world);
@@ -257,7 +281,7 @@ impl TabInner for SceneTab {
                         .into_iter()
                         .enumerate()
                         .filter_map(|(index, d)| d.map(|d| (index, d)))
-                        .min_by(|(_, a), (_, b)| crate::util::total_cmp(a, b))
+                        .min_by(|(_, a), (_, b)| f32::total_cmp(a, b))
                         .map(|(index, _)| index)
                     });
 
@@ -363,10 +387,11 @@ impl super::gizmo::Lines {
     }
 }
 
-pub struct SceneRenderTarget(pub Option<Handle<Image>>);
-
-impl SceneRenderTarget {
-    pub fn insert(commands: &mut Commands, images: &mut Assets<Image>) -> Handle<Image> {
+impl SceneTab {
+    pub fn spawn(commands: &mut Commands, images: &mut Assets<Image>) -> bevy::prelude::Entity {
+        use bevy::core_pipeline::clear_color::ClearColorConfig;
+        use bevy::prelude::*;
+        use bevy::render::camera::RenderTarget;
         use bevy::render::render_resource::*;
 
         let size = Extent3d {
@@ -395,9 +420,35 @@ impl SceneRenderTarget {
         image.resize(size);
 
         let handle = images.add(image);
+        let target = RenderTarget::Image(handle);
+        let gray = 0x2B as f32 / 255.0;
+        let clear_color = Color::rgba(gray, gray, gray, 1.0);
 
-        commands.insert_resource(Self(Some(handle.clone())));
+        commands
+            .spawn_bundle(Camera3dBundle {
+                camera_3d: Camera3d {
+                    clear_color: ClearColorConfig::Custom(clear_color),
+                    ..default()
+                },
+                camera: Camera {
+                    target,
+                    ..default()
+                },
 
-        handle
+                transform: Transform::from_translation(Vec3::new(0.0, 5.0, 15.0)),
+
+                ..default()
+            })
+            .insert(Self {
+                texture_id: None,
+                camera_proj: PerspectiveProjection::default(),
+
+                yew: 0.0,
+                pitch: 0.0,
+
+                zsorting: Vec::new(),
+            })
+            .insert(EditorPanel::default())
+            .id()
     }
 }

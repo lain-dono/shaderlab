@@ -1,6 +1,6 @@
-use super::{Animation, BoneTimeline, Curve, Keyframe};
-use crate::app::TabInner;
-use crate::context::EditorContext;
+use super::{
+    controller::PlayState, Animation, BoneTimeline, Controller, Curve, Keyframe, PlayControl,
+};
 use crate::style::Style;
 use egui::*;
 
@@ -30,148 +30,159 @@ const SCALE_COLOR: Color32 = Color32::from_rgb(0xFF, 0x85, 0x1B);
 
 const ROW_WIDTH: f32 = 24.0;
 
-pub struct TimelinePanel {
-    current_time: u32,
-    animation: Animation,
-}
-
-impl Default for TimelinePanel {
-    fn default() -> Self {
-        let animation = super::example::animation();
-
-        Self {
-            current_time: 8,
-            animation,
-        }
+fn play_control(ui: &mut Ui, state: PlayState) -> Option<PlayControl> {
+    if ui.button(crate::icon::TRIA_LEFT_BAR.to_string()).clicked() {
+        return Some(PlayControl::First);
     }
+    if ui.button(crate::icon::PREV_KEYFRAME.to_string()).clicked() {
+        return Some(PlayControl::Prev);
+    }
+
+    if matches!(state, PlayState::PlayReverse) {
+        if ui.button(crate::icon::PAUSE.to_string()).clicked() {
+            return Some(PlayControl::Pause);
+        }
+    } else if ui.button(crate::icon::PLAY_REVERSE.to_string()).clicked() {
+        return Some(PlayControl::PlayReverse);
+    }
+
+    if matches!(state, PlayState::Play) {
+        if ui.button(crate::icon::PAUSE.to_string()).clicked() {
+            return Some(PlayControl::Pause);
+        }
+    } else if ui.button(crate::icon::PLAY.to_string()).clicked() {
+        return Some(PlayControl::Play);
+    }
+
+    if ui.button(crate::icon::NEXT_KEYFRAME.to_string()).clicked() {
+        return Some(PlayControl::Next);
+    }
+    if ui.button(crate::icon::TRIA_RIGHT_BAR.to_string()).clicked() {
+        return Some(PlayControl::Last);
+    }
+    None
 }
 
-impl TabInner for TimelinePanel {
-    fn ui(&mut self, ui: &mut Ui, style: &Style, _ctx: EditorContext) {
-        let rect = ui.available_rect_before_wrap();
-        ui.painter().rect_filled(rect, 0.0, BONE_BG_COLOR);
+pub fn run_ui(controller: &mut Controller, ui: &mut Ui, style: &Style, animation: &mut Animation) {
+    let rect = ui.available_rect_before_wrap();
+    ui.painter().rect_filled(rect, 0.0, BONE_BG_COLOR);
 
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        style.set_theme_visuals(ui);
+
+        // title bar
         ui.scope(|ui| {
-            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-            style.set_theme_visuals(ui);
+            let max_width = ui.available_size_before_wrap().x;
+            let size = egui::vec2(max_width, HEADER_HEIGHT);
 
-            // title bar
-            ui.scope(|ui| {
-                let max_width = ui.available_size_before_wrap().x;
-                let size = egui::vec2(max_width, HEADER_HEIGHT);
+            let bg_idx = ui.painter().add(Shape::Noop);
 
-                let bg_idx = ui.painter().add(Shape::Noop);
-
-                let response = ui.allocate_ui(size, |ui| {
+            let response = ui.allocate_ui(size, |ui| {
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
                     ui.add_space(2.0);
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
-                        ui.add_space(2.0);
 
-                        let prev_style = (*ui.ctx().style()).clone();
-                        let mut style = prev_style.clone();
+                    let prev_style = (*ui.ctx().style()).clone();
+                    let mut style = prev_style.clone();
 
-                        use egui::FontFamily::Proportional;
-                        use egui::TextStyle::*;
-                        style.text_styles = [
-                            (Body, FontId::new(CONTROL_SIZE, Proportional)),
-                            (Button, FontId::new(CONTROL_SIZE, Proportional)),
-                        ]
-                        .into();
-                        ui.ctx().set_style(style);
+                    use egui::FontFamily::Proportional;
+                    use egui::TextStyle::*;
+                    style.text_styles = [
+                        (Body, FontId::new(CONTROL_SIZE, Proportional)),
+                        (Button, FontId::new(CONTROL_SIZE, Proportional)),
+                    ]
+                    .into();
+                    ui.ctx().set_style(style);
 
-                        let _ = ui.button(crate::icon::TRIA_LEFT_BAR.to_string()).clicked();
-                        let _ = ui.button(crate::icon::PREV_KEYFRAME.to_string()).clicked();
-                        let _ = ui.button(crate::icon::PLAY_REVERSE.to_string()).clicked();
-                        let _ = ui.button(crate::icon::PLAY.to_string()).clicked();
-                        let _ = ui.button(crate::icon::NEXT_KEYFRAME.to_string()).clicked();
-                        let _ = ui.button(crate::icon::TRIA_RIGHT_BAR.to_string()).clicked();
+                    if let Some(control) = play_control(ui, controller.state) {
+                        controller.action(control);
+                    }
 
-                        ui.ctx().set_style(prev_style);
-                    });
-                    ui.add_space(2.0);
+                    ui.ctx().set_style(prev_style);
                 });
+                ui.add_space(2.0);
+            });
 
-                let rect = response.response.rect;
-                let rect = Rect::from_min_size(rect.min, vec2(max_width, rect.height()));
-                ui.painter()
-                    .set(bg_idx, Shape::rect_filled(rect, 0.0, style.panel));
+            let rect = response.response.rect;
+            let rect = Rect::from_min_size(rect.min, vec2(max_width, rect.height()));
+            ui.painter()
+                .set(bg_idx, Shape::rect_filled(rect, 0.0, style.panel));
 
-                {
-                    let left_split = rect.min.x + LEFT_PADDING;
-                    let rect = rect.intersect(Rect::everything_right_of(left_split));
+            {
+                let left_split = rect.min.x + LEFT_PADDING;
+                let rect = rect.intersect(Rect::everything_right_of(left_split));
 
-                    let id = Id::new("timeline_current_time");
-                    let outer_response = ui.interact(rect, id, Sense::click_and_drag());
-                    let outer_response =
-                        outer_response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                let id = Id::new("timeline_current_time");
+                let outer_response = ui.interact(rect, id, Sense::click_and_drag());
+                let outer_response = outer_response.on_hover_cursor(egui::CursorIcon::PointingHand);
 
-                    let is_down = outer_response.is_pointer_button_down_on();
+                let is_down = outer_response.is_pointer_button_down_on();
 
-                    let count = (rect.width() / ROW_WIDTH) as u32;
-                    let ppi = ui.ctx().pixels_per_point();
+                let count = (rect.width() / ROW_WIDTH) as u32;
+                let ppi = ui.ctx().pixels_per_point();
 
-                    let painter = ui.painter();
-                    for i in 0..=count {
-                        let x = rect.min.x + ROW_WIDTH * i as f32;
-                        let x = crate::util::map_to_pixel(x, ppi, f32::floor);
+                let painter = ui.painter();
+                for i in 0..=count {
+                    let x = rect.min.x + ROW_WIDTH * i as f32;
+                    let x = crate::util::map_to_pixel(x, ppi, f32::floor);
 
-                        let height = rect.height();
-                        let center = pos2(x, rect.min.y + height / 2.0);
-                        let size = vec2(ROW_WIDTH, height);
-                        let item_rect = Rect::from_center_size(center, size);
-                        let bg_idx = ui.painter().add(Shape::Noop);
+                    let height = rect.height();
+                    let center = pos2(x, rect.min.y + height / 2.0);
+                    let size = vec2(ROW_WIDTH, height);
+                    let item_rect = Rect::from_center_size(center, size);
+                    let bg_idx = ui.painter().add(Shape::Noop);
 
-                        {
-                            let id = Id::new("timeline_current_time").with(i);
-                            let response = ui.interact(item_rect, id, Sense::hover());
+                    {
+                        let id = Id::new("timeline_current_time").with(i);
+                        let response = ui.interact(item_rect, id, Sense::hover());
 
-                            if is_down && response.hovered() {
-                                self.current_time = i;
-                            }
-                        }
-
-                        let pos = item_rect.center();
-                        let font_id = egui::FontId::monospace(10.0);
-                        painter.text(pos, Align2::CENTER_CENTER, i, font_id, style.input_text);
-
-                        let bg_rect = item_rect.shrink2(vec2(1.0, 4.0));
-                        let px = ppi.recip();
-                        if i == self.current_time {
-                            ui.painter().set(
-                                bg_idx,
-                                Shape::rect_filled(bg_rect, 2.0, KEY_DIVIDER_CURRENT_COLOR),
-                            );
-
-                            ui.painter().line_segment(
-                                [item_rect.center_bottom(), bg_rect.center_bottom()],
-                                (px, KEY_DIVIDER_CURRENT_COLOR),
-                            );
-                        } else {
-                            ui.painter().line_segment(
-                                [item_rect.center_bottom(), bg_rect.center_bottom()],
-                                (px, KEY_DIVIDER_COLOR),
-                            );
+                        if is_down && response.hovered() {
+                            controller.current_time = i;
                         }
                     }
+
+                    let pos = item_rect.center();
+                    let font_id = egui::FontId::monospace(10.0);
+                    painter.text(pos, Align2::CENTER_CENTER, i, font_id, style.input_text);
+
+                    let bg_rect = item_rect.shrink2(vec2(1.0, 4.0));
+                    let px = ppi.recip();
+                    if i == controller.current_time {
+                        ui.painter().set(
+                            bg_idx,
+                            Shape::rect_filled(bg_rect, 2.0, KEY_DIVIDER_CURRENT_COLOR),
+                        );
+
+                        ui.painter().line_segment(
+                            [item_rect.center_bottom(), bg_rect.center_bottom()],
+                            (px, KEY_DIVIDER_CURRENT_COLOR),
+                        );
+                    } else {
+                        ui.painter().line_segment(
+                            [item_rect.center_bottom(), bg_rect.center_bottom()],
+                            (px, KEY_DIVIDER_COLOR),
+                        );
+                    }
                 }
-            });
-
-            style.for_scrollbar(ui);
-
-            let scroll = ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .id_source("Timeline ScrollArea");
-
-            scroll.show(ui, |ui| {
-                style.scrollarea(ui);
-
-                for bone in &mut self.animation.bones {
-                    bone.draw(ui, style, self.current_time);
-                }
-            });
+            }
         });
-    }
+
+        style.for_scrollbar(ui);
+
+        let scroll = ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .id_source("Timeline ScrollArea");
+
+        scroll.show(ui, |ui| {
+            style.scrollarea(ui);
+
+            for bone in &mut animation.bones {
+                bone.draw(ui, style, controller.current_time);
+            }
+        });
+    });
 }
 
 impl<T> Keyframe<T> {

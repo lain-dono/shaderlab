@@ -1,21 +1,41 @@
-use crate::app::TabInner;
-use crate::context::EditorContext;
+use crate::app::EditorPanel;
 use crate::style::Style;
 use bevy::asset::AssetIo;
+use bevy::prelude::*;
+use bevy::window::WindowId;
 use std::ffi::OsStr;
 use std::path::Path;
 
-#[derive(Default)]
+#[derive(Default, Component)]
 pub struct FileBrowser;
 
-impl TabInner for FileBrowser {
-    fn ui(&mut self, ui: &mut egui::Ui, style: &Style, ctx: EditorContext) {
-        let rect = ui.available_rect_before_wrap();
-        ui.painter().rect_filled(rect, 0.0, style.panel);
+impl FileBrowser {
+    pub fn system(
+        mut context: ResMut<crate::shell::EguiContext>,
+        style: Res<Style>,
+        query: Query<(Entity, &EditorPanel), With<Self>>,
+        assets: Res<AssetServer>,
+    ) {
+        let [ctx] = context.ctx_mut([WindowId::primary()]);
+        for (entity, viewport) in query.iter() {
+            if let Some(viewport) = viewport.viewport {
+                let id = egui::Id::new("FileBrowser").with(entity);
+                let mut ui = egui::Ui::new(
+                    ctx.clone(),
+                    egui::LayerId::background(),
+                    id,
+                    viewport,
+                    viewport,
+                );
 
-        let io = ctx.assets.asset_io();
+                let rect = ui.available_rect_before_wrap();
+                ui.painter().rect_filled(rect, 0.0, style.panel);
 
-        read_dir(ui, io, ".".as_ref());
+                let io = assets.asset_io();
+
+                read_dir(&mut ui, io, ".".as_ref());
+            }
+        }
     }
 }
 

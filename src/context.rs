@@ -10,9 +10,10 @@ pub struct SelectedEntityId(usize);
 
 pub struct EditorContext<'a> {
     pub scene: &'a mut ReflectScene,
-    pub state: &'a mut AnyMap,
     pub types: &'a TypeRegistry,
     pub assets: &'a mut AssetServer,
+
+    pub state: &'a mut AnyMap,
 }
 
 impl<'a> EditorContext<'a> {
@@ -34,16 +35,22 @@ impl<'a> EditorContext<'a> {
         self.get(index)
     }
 
+    pub fn get_scene<'s>(
+        scene: &'s mut ReflectScene,
+        assets: &'s mut AssetServer,
+        types: &'s TypeRegistry,
+        index: usize,
+    ) -> Option<EntityEditor<'s>> {
+        scene.entities.get_mut(index).map(|entity| EntityEditor {
+            index,
+            entity,
+            types,
+            assets,
+        })
+    }
+
     pub fn get(&mut self, index: usize) -> Option<EntityEditor> {
-        self.scene
-            .entities
-            .get_mut(index)
-            .map(|entity| EntityEditor {
-                index,
-                entity,
-                types: self.types,
-                assets: self.assets,
-            })
+        Self::get_scene(self.scene, self.assets, self.types, index)
     }
 }
 

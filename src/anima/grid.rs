@@ -37,11 +37,11 @@ impl Grid {
             let size = frame.size();
             let cursor = (cursor - frame.center()) * vec2(1.0, -1.0);
             self.offset += cursor / size * (size / prev - size / next);
-        }
 
-        if input.pointer.middle_down() {
-            let delta = input.pointer.delta();
-            self.offset += delta * vec2(-1.0, 1.0) * self.zoom_factor.recip();
+            if input.pointer.middle_down() {
+                let delta = input.pointer.delta();
+                self.offset += delta * vec2(-1.0, 1.0) * self.zoom_factor.recip();
+            }
         }
     }
 

@@ -1,49 +1,28 @@
-use super::grid::Grid;
-use super::{Armature, Controller};
-use crate::app::TabInner;
-use crate::context::EditorContext;
+use super::{grid::Grid, Armature, Controller};
 use crate::style::Style;
 use egui::*;
 
 #[derive(PartialEq)]
-enum Mode {
+pub enum Mode {
     Edit,
     Pose,
     Weight,
 }
 
-impl Default for Mode {
-    fn default() -> Self {
-        Self::Edit
-    }
-}
-
+#[derive(bevy::prelude::Component)]
 pub struct Animation2d {
-    rotation: f32,
-    location: Vec2,
-    scale: Vec2,
-    shear: Vec2,
+    pub rotation_key: bool,
+    pub location_key: bool,
+    pub scale_key: bool,
+    pub shear_key: bool,
 
-    rotation_key: bool,
-    location_key: bool,
-    scale_key: bool,
-    shear_key: bool,
-
-    mode: Mode,
-
-    grid: Grid,
-    armature: Armature,
-    controller: Controller,
+    pub mode: Mode,
+    pub grid: Grid,
 }
 
 impl Default for Animation2d {
     fn default() -> Self {
         Self {
-            rotation: 0.0,
-            location: vec2(0.0, 0.0),
-            scale: vec2(1.0, 1.0),
-            shear: vec2(0.0, 0.0),
-
             rotation_key: false,
             location_key: false,
             scale_key: false,
@@ -52,14 +31,19 @@ impl Default for Animation2d {
             mode: Mode::Edit,
 
             grid: Grid::new(),
-            controller: Controller::default(),
-            armature: super::example::armature(),
         }
     }
 }
 
-impl TabInner for Animation2d {
-    fn ui(&mut self, ui: &mut Ui, style: &Style, _ctx: EditorContext) {
+impl Animation2d {
+    pub fn run_ui(
+        &mut self,
+        ui: &mut Ui,
+        style: &Style,
+
+        armature: &mut Armature,
+        controller: &mut Controller,
+    ) {
         let frame = ui.available_rect_before_wrap();
         ui.painter().rect_filled(frame, 0.0, style.panel);
 
@@ -84,20 +68,13 @@ impl TabInner for Animation2d {
             {
                 self.grid.update(ui, frame);
 
-                {
-                    let offset = vec2(-self.grid.offset.x, self.grid.offset.y);
-                    let zoom = self.grid.zoom_factor;
-                    let offset = frame.center() + offset * zoom;
+                let offset = vec2(-self.grid.offset.x, self.grid.offset.y);
+                let zoom = self.grid.zoom_factor;
+                let offset = frame.center() + offset * zoom;
 
-                    for bone in &mut self.armature.bones {
-                        bone.rotation = ui.input().time as f32;
-                    }
+                controller.collect_world_transform(armature);
 
-                    self.controller.collect_world_transform(&self.armature);
-
-                    self.armature
-                        .paint_bones(ui.painter(), offset, zoom, &self.controller.world);
-                }
+                armature.paint_bones(ui.painter(), offset, zoom, &controller.world);
 
                 let mut shapes = Vec::new();
                 self.grid.paint(ui, frame, cursor, &mut shapes);
@@ -161,25 +138,27 @@ impl TabInner for Animation2d {
 
                         ui.add_space(4.0);
 
+                        let bone = &mut armature.bones[0];
+
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
                             ui.columns(1, |ui| {
-                                ui[0].drag_angle(&mut self.rotation);
+                                ui[0].drag_angle(&mut bone.rotation);
                             });
 
                             ui.columns(2, |ui| {
-                                ui[0].add(DragValue::new(&mut self.location.x).speed(0.1));
-                                ui[1].add(DragValue::new(&mut self.location.y).speed(0.1));
+                                ui[0].add(DragValue::new(&mut bone.location.x).speed(1.0));
+                                ui[1].add(DragValue::new(&mut bone.location.y).speed(1.0));
                             });
 
                             ui.columns(2, |ui| {
-                                ui[0].add(DragValue::new(&mut self.scale.x).speed(0.1));
-                                ui[1].add(DragValue::new(&mut self.scale.y).speed(0.1));
+                                ui[0].add(DragValue::new(&mut bone.scale.x).speed(0.1));
+                                ui[1].add(DragValue::new(&mut bone.scale.y).speed(0.1));
                             });
 
                             ui.columns(2, |ui| {
-                                ui[0].add(DragValue::new(&mut self.shear.x).speed(0.1));
-                                ui[1].add(DragValue::new(&mut self.shear.y).speed(0.1));
+                                ui[0].add(DragValue::new(&mut bone.shear.x).speed(0.1));
+                                ui[1].add(DragValue::new(&mut bone.shear.y).speed(0.1));
                             });
                         });
 

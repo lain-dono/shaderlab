@@ -1,7 +1,8 @@
-use crate::graph::Graph;
+use self::graph::Graph;
 use ahash::AHashSet;
 use slotmap::SlotMap;
 
+mod graph;
 mod link;
 mod node;
 mod port;
@@ -447,7 +448,7 @@ impl Workspace {
                     .iter()
                     .map(|(key, port)| (key, port.position.distance(self.input.pointer)))
                     .filter(|&(_, distance)| distance < hover_distance)
-                    .max_by(|(_, a), (_, b)| crate::total_cmp(a, b))
+                    .max_by(|(_, a), (_, b)| f32::total_cmp(a, b))
                     .map(|(key, _)| key);
             }
 
