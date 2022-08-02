@@ -35,27 +35,6 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub fn collect_world_transform(&mut self, armature: &Armature) {
-        self.world.clear();
-
-        for bone in &armature.bones {
-            let local = bone.local_matrix();
-            let parent = bone.parent as usize;
-            let parent = *self.world.get(parent).unwrap_or(&Matrix::IDENTITY);
-            self.world.push(parent.prepend(local));
-        }
-    }
-
-    pub fn animate(&mut self, armature: &Armature, animaton: &Animation, frame: usize) {
-        self.world.clear();
-
-        for bone in &armature.bones {
-            let local = bone.local_matrix();
-            let parent = bone.parent as usize;
-            let parent = *self.world.get(parent).unwrap_or(&Matrix::IDENTITY);
-            self.world.push(parent.prepend(local));
-        }
-    }
 
     pub fn is_playing(&self) -> bool {
         matches!(self.state, PlayState::Play | PlayState::PlayReverse)

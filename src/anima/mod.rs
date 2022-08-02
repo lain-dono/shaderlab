@@ -8,71 +8,66 @@ pub mod math;
 pub mod timeline;
 pub mod viewport;
 
-pub use self::animation::{Animation, BoneTimeline, Curve, Keyframe};
+pub use self::animation::{Animation, BoneTimeline, Interpolation, Keyframe};
 pub use self::armature::{Armature, Bone};
-pub use self::controller::{Controller, PlayControl};
+pub use self::controller::{Controller, PlayControl, PlayState};
 pub use self::math::Matrix;
+pub use self::timeline::TimelinePanel;
 pub use self::viewport::Animation2d;
 
-use crate::ui::{AddEditorTab, EditorTab, Style};
-use bevy::ecs::system::lifetimeless::{SRes, SResMut};
-use bevy::ecs::system::SystemParamItem;
-use bevy::prelude::{default, Entity, Res, ResMut, Time};
-
-#[derive(Default, bevy::prelude::Component)]
-pub struct TimelinePanel;
+use crate::ui::AddEditorTab;
+use bevy::prelude::{default, Res, ResMut};
 
 #[derive(Default)]
 pub struct Anima;
 
 impl bevy::app::Plugin for Anima {
     fn build(&self, app: &mut bevy::app::App) {
-        app.add_startup_system(setup)
-            .add_editor_tab::<TimelinePanel>()
-            .add_editor_tab::<Animation2d>()
-            .add_system(animate_rot);
+        app.insert_resource(Controller {
+            current_time: 8,
+            max_time: 15,
+            ..default()
+        })
+        .insert_resource(self::example::armature())
+        .insert_resource(self::example::animation())
+        .add_system(sync_frame)
+        .add_editor_tab::<TimelinePanel>()
+        .add_editor_tab::<Animation2d>();
     }
 }
 
-pub fn setup(mut commands: bevy::prelude::Commands) {
-    commands.insert_resource(self::example::armature());
-    commands.insert_resource(self::example::animation());
-    commands.insert_resource(Controller {
-        current_time: 8,
-        max_time: 15,
-        ..default()
-    });
-}
+fn sync_frame(mut ctrl: ResMut<Controller>, armature: Res<Armature>, animation: Res<Animation>) {
+    ctrl.world.clear();
 
-impl EditorTab for TimelinePanel {
-    type Param = (SRes<Style>, SResMut<Animation>, SResMut<Controller>);
+    let time = ctrl.current_time as f32;
+    for (index, bone) in armature.bones.iter().enumerate() {
+        let mut transform = transform(bone.rotation, bone.location, bone.scale, bone.shear);
+        if let Some(anim_bone) = animation.bones.get(index) {
+            transform = transform.prepend(anim_bone.resolve(time));
+        }
 
-    fn ui<'w>(
-        &mut self,
-        ui: &mut egui::Ui,
-        _entity: Entity,
-        (style, animation, controller): &mut SystemParamItem<'w, '_, Self::Param>,
-    ) {
-        self::timeline::run_ui(controller, ui, style, animation);
+        let parent = bone.parent as usize;
+        let parent = *ctrl.world.get(parent).unwrap_or(&Matrix::IDENTITY);
+        ctrl.world.push(parent.prepend(transform));
     }
 }
 
-impl EditorTab for Animation2d {
-    type Param = (SRes<Style>, SResMut<Armature>, SResMut<Controller>);
+pub fn transform(
+    rotation: f32,
+    location: egui::Pos2,
+    scale: egui::Vec2,
+    shear: egui::Vec2,
+) -> Matrix {
+    let (sx, cx) = (rotation - shear.x).sin_cos();
+    let (sy, cy) = (rotation + shear.y).sin_cos();
+    let sx = -sx;
 
-    fn ui<'w>(
-        &mut self,
-        ui: &mut egui::Ui,
-        _entity: Entity,
-        (style, armature, controller): &mut SystemParamItem<'w, '_, Self::Param>,
-    ) {
-        self.run_ui(ui, style, armature, controller);
-    }
-}
-
-fn animate_rot(time: Res<Time>, mut armature: ResMut<Armature>) {
-    for bone in &mut armature.bones {
-        bone.rotation = time.seconds_since_startup() as f32;
-        bone.rotation %= std::f32::consts::TAU;
+    Matrix {
+        a: cy * scale.x,
+        b: sy * scale.x,
+        c: sx * scale.y,
+        d: cx * scale.y,
+        tx: location.x,
+        ty: location.y,
     }
 }

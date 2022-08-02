@@ -19,8 +19,8 @@ pub use self::{
     tab::SceneTab,
 };
 
+use bevy::ecs::event::Events;
 use bevy::prelude::*;
-use bevy::{ecs::event::Events, render::camera::Projection};
 
 #[derive(Default)]
 pub struct ScenePlugin;
@@ -59,21 +59,18 @@ pub fn scene_spawner_system(world: &mut World) {
     });
 }
 
+use bevy::render::camera::{Camera, RenderTarget};
+
 pub fn update_scene_render_target(
-    mut egui_context: ResMut<crate::ui::shell::EguiContext>,
+    mut context: ResMut<crate::ui::shell::EguiContext>,
     mut images: ResMut<Assets<Image>>,
-    mut query: Query<(
-        &mut Projection,
-        &mut SceneTab,
-        &crate::ui::EditorPanel,
-        &bevy::render::camera::Camera,
-    )>,
+    mut query: Query<(&mut SceneTab, &crate::ui::EditorPanel, &Camera)>,
 ) {
-    let [ctx] = egui_context.ctx_mut([bevy::window::WindowId::primary()]);
+    let [ctx] = context.ctx_mut([bevy::window::WindowId::primary()]);
     let ppi = ctx.pixels_per_point();
 
-    for (mut projection, mut scene, tab, camera) in query.iter_mut() {
-        let handle = if let bevy::render::camera::RenderTarget::Image(handle) = &camera.target {
+    for (mut scene, tab, camera) in query.iter_mut() {
+        let handle = if let RenderTarget::Image(handle) = &camera.target {
             handle
         } else {
             continue;
@@ -83,15 +80,13 @@ pub fn update_scene_render_target(
             if let Some(viewport) = tab.viewport {
                 let width = (viewport.width() * ppi) as u32;
                 let height = (viewport.height() * ppi) as u32;
-                scene.texture_id = Some(egui_context.add_image(handle.clone_weak()));
+                scene.texture_id = Some(context.add_image(handle.clone_weak()));
 
                 image.resize(wgpu::Extent3d {
                     width: width.max(1),
                     height: height.max(1),
                     ..default()
                 });
-
-                *projection = Projection::Perspective(scene.camera_proj.clone());
             }
         }
     }

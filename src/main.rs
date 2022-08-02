@@ -8,8 +8,7 @@ use crate::util::anymap::AnyMap;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::reflect::TypeRegistryArc;
-use bevy::render::{render_graph::RenderGraph, RenderApp};
-use bevy::window::{PresentMode, WindowId};
+use bevy::window::PresentMode;
 use bevy::winit::{UpdateMode, WinitSettings};
 
 pub mod anima;
@@ -52,7 +51,6 @@ fn main() {
     app.add_plugin(crate::scene::GizmoPlugin);
 
     app.add_plugin(self::ui::EditorUiPlugin);
-    app.add_startup_system(setup);
 
     app.add_editor_tab::<self::scene::FileBrowser>();
     app.add_editor_tab::<self::scene::Hierarchy>();
@@ -61,13 +59,7 @@ fn main() {
 
     app.add_plugin(self::anima::Anima);
 
-    {
-        let render_app = app.sub_app_mut(RenderApp);
-        let mut graph = render_app.world.resource_mut::<RenderGraph>();
-
-        // add egui nodes
-        crate::ui::shell::setup_pipeline(&mut graph, WindowId::primary(), "ui_root");
-    }
+    app.add_startup_system(setup);
 
     app.run();
 }
@@ -75,25 +67,62 @@ fn main() {
 fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    mut context: ResMut<crate::ui::shell::EguiContext>,
     mut spawner: ResMut<ReflectSceneSpawner>,
     mut scenes: ResMut<Assets<ReflectScene>>,
     type_registry: Res<TypeRegistryArc>,
 ) {
-    commands.insert_resource(crate::ui::Style::default());
-
-    init_split_tree(&mut commands, &mut images);
-
-    let world = exampe_scene();
-    let scene = ReflectScene::from_world(&world, &type_registry);
-    let scene = scenes.add(scene);
-    spawner.spawn(scene.clone());
-    commands.insert_resource(scene);
+    use crate::anima::{Animation2d, TimelinePanel};
+    use crate::scene::{FileBrowser, Hierarchy, Inspector, SceneTab};
+    use crate::ui::*;
 
     {
-        let [ctx] = context.ctx_mut([bevy::window::WindowId::primary()]);
-        ctx.set_fonts(crate::ui::fonts_with_blender());
+        let world = exampe_scene();
+        let scene = ReflectScene::from_world(&world, &type_registry);
+        let scene = scenes.add(scene);
+        spawner.spawn(scene.clone());
+        commands.insert_resource(scene);
     }
+
+    trait SpawnTab {
+        fn spawn_tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab;
+
+        fn spawn_placeholder(&mut self, icon: char, title: &str) -> Tab {
+            self.spawn_tab(icon, title, PlaceholderTab::default())
+        }
+    }
+
+    impl<'s, 'w> SpawnTab for Commands<'s, 'w> {
+        fn spawn_tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab {
+            let entity = self
+                .spawn()
+                .insert_bundle((EditorPanel::default(), tab))
+                .id();
+            Tab::new(icon, title, entity)
+        }
+    }
+
+    let node_tree = commands.spawn_placeholder(icon::NODETREE, "Node Tree");
+
+    let scene_entity = SceneTab::spawn(&mut commands, &mut images);
+    let scene = Tab::new(icon::VIEW3D, "Scene", scene_entity);
+
+    let hierarchy = commands.spawn_tab(icon::OUTLINER, "Hierarchy", Hierarchy::default());
+    let inspector = commands.spawn_tab(icon::PROPERTIES, "Inspector", Inspector::default());
+    let files = commands.spawn_tab(icon::FILEBROWSER, "File Browser", FileBrowser::default());
+
+    let assets = commands.spawn_placeholder(icon::ASSET_MANAGER, "Asset Manager");
+
+    let anim = commands.spawn_tab(icon::VIEW_ORTHO, "Animate 2d", Animation2d::default());
+    let timeline = commands.spawn_tab(icon::TIME, "Timeline", TimelinePanel::default());
+
+    let root = TreeNode::leaf_with(vec![anim, scene, node_tree]);
+    let mut split_tree = SplitTree::new(root);
+
+    let [a, b] = split_tree.split_tabs(NodeIndex::root(), Split::Right, 0.7, vec![inspector]);
+    let [_, _] = split_tree.split_tabs(a, Split::Below, 0.8, vec![timeline]);
+    let [_, _] = split_tree.split_tabs(b, Split::Below, 0.5, vec![hierarchy, files, assets]);
+
+    commands.insert_resource(split_tree);
 }
 
 fn exampe_scene() -> World {
@@ -192,51 +221,4 @@ fn exampe_scene() -> World {
     }
 
     world
-}
-
-fn init_split_tree(commands: &mut Commands, images: &mut Assets<Image>) {
-    use crate::anima::{Animation2d, TimelinePanel};
-    use crate::scene::{FileBrowser, Hierarchy, Inspector, SceneTab};
-    use crate::ui::*;
-
-    trait SpawnTab {
-        fn spawn_tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab;
-
-        fn spawn_placeholder(&mut self, icon: char, title: &str) -> Tab {
-            self.spawn_tab(icon, title, PlaceholderTab::default())
-        }
-    }
-
-    impl<'s, 'w> SpawnTab for Commands<'s, 'w> {
-        fn spawn_tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab {
-            let entity = self
-                .spawn()
-                .insert_bundle((EditorPanel::default(), tab))
-                .id();
-            Tab::new(icon, title, entity)
-        }
-    }
-
-    let node_tree = commands.spawn_placeholder(icon::NODETREE, "Node Tree");
-
-    let scene_entity = SceneTab::spawn(commands, images);
-    let scene = Tab::new(icon::VIEW3D, "Scene", scene_entity);
-
-    let hierarchy = commands.spawn_tab(icon::OUTLINER, "Hierarchy", Hierarchy::default());
-    let inspector = commands.spawn_tab(icon::PROPERTIES, "Inspector", Inspector::default());
-    let files = commands.spawn_tab(icon::FILEBROWSER, "File Browser", FileBrowser::default());
-
-    let assets = commands.spawn_placeholder(icon::ASSET_MANAGER, "Asset Manager");
-
-    let anim = commands.spawn_tab(icon::VIEW_ORTHO, "Animate 2d", Animation2d::default());
-    let timeline = commands.spawn_tab(icon::TIME, "Timeline", TimelinePanel::default());
-
-    let root = TreeNode::leaf_with(vec![anim, scene, node_tree]);
-    let mut split_tree = SplitTree::new(root);
-
-    let [a, b] = split_tree.split_tabs(NodeIndex::root(), Split::Right, 0.7, vec![inspector]);
-    let [_, _] = split_tree.split_tabs(a, Split::Below, 0.8, vec![timeline]);
-    let [_, _] = split_tree.split_tabs(b, Split::Below, 0.5, vec![hierarchy, files, assets]);
-
-    commands.insert_resource(split_tree);
 }

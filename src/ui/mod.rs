@@ -13,8 +13,58 @@ pub use self::tabs::{NodeIndex, Split, SplitTree, Tab, TreeNode};
 
 use bevy::ecs::system::StaticSystemParam;
 use bevy::prelude::*;
+use bevy::render::{render_graph::RenderGraph, RenderApp};
+use bevy::window::WindowId;
 
-pub fn fonts_with_blender() -> egui::FontDefinitions {
+#[derive(Debug, Hash, PartialEq, Eq, Clone, StageLabel)]
+pub enum EditorStage {
+    Root,
+    Tabs,
+    Finish,
+}
+
+pub struct EditorUiPlugin;
+
+impl bevy::app::Plugin for EditorUiPlugin {
+    fn build(&self, app: &mut bevy::app::App) {
+        use self::app::*;
+        use bevy::prelude::*;
+
+        app.add_plugin(self::shell::EguiPlugin)
+            .init_resource::<self::style::Style>()
+            .init_resource::<SharedData>()
+            .add_startup_system(setup_icon_font)
+            .add_stage_after(
+                CoreStage::PreUpdate,
+                EditorStage::Root,
+                SystemStage::parallel(),
+            )
+            .add_stage_after(
+                CoreStage::Update,
+                EditorStage::Tabs,
+                SystemStage::parallel(),
+            )
+            .add_stage_before(
+                CoreStage::PostUpdate,
+                EditorStage::Finish,
+                SystemStage::parallel(),
+            )
+            .add_system_to_stage(EditorStage::Root, ui_root)
+            .add_system_to_stage(EditorStage::Finish, ui_tabs)
+            .add_system_to_stage(EditorStage::Finish, ui_finish.after(ui_tabs))
+            .add_editor_tab::<PlaceholderTab>();
+
+        {
+            let render_app = app.sub_app_mut(RenderApp);
+            let mut graph = render_app.world.resource_mut::<RenderGraph>();
+
+            // add egui nodes
+            crate::ui::shell::setup_pipeline(&mut graph, WindowId::primary(), "ui_root");
+        }
+    }
+}
+
+fn setup_icon_font(mut context: ResMut<self::shell::EguiContext>) {
     let font = egui::FontData::from_static(include_bytes!("icon.ttf"));
 
     let mut fonts = egui::FontDefinitions::default();
@@ -35,45 +85,8 @@ pub fn fonts_with_blender() -> egui::FontDefinitions {
         .unwrap()
         .push("blender".to_owned());
 
-    fonts
-}
-
-#[derive(Debug, Hash, PartialEq, Eq, Clone, StageLabel)]
-pub enum EditorStage {
-    Root,
-    Tabs,
-    Finish,
-}
-
-pub struct EditorUiPlugin;
-
-impl bevy::app::Plugin for EditorUiPlugin {
-    fn build(&self, app: &mut bevy::app::App) {
-        use self::app::*;
-        use bevy::prelude::*;
-
-        app.add_plugin(self::shell::EguiPlugin)
-            .init_resource::<SharedData>()
-            .add_stage_after(
-                CoreStage::PreUpdate,
-                EditorStage::Root,
-                SystemStage::parallel(),
-            )
-            .add_stage_after(
-                CoreStage::Update,
-                EditorStage::Tabs,
-                SystemStage::parallel(),
-            )
-            .add_stage_before(
-                CoreStage::PostUpdate,
-                EditorStage::Finish,
-                SystemStage::parallel(),
-            )
-            .add_system_to_stage(EditorStage::Root, ui_root)
-            .add_system_to_stage(EditorStage::Finish, ui_tabs)
-            .add_system_to_stage(EditorStage::Finish, ui_finish.after(ui_tabs))
-            .add_editor_tab::<PlaceholderTab>();
-    }
+    let [ctx] = context.ctx_mut([WindowId::primary()]);
+    ctx.set_fonts(fonts);
 }
 
 pub trait AddEditorTab {

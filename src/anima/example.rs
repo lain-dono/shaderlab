@@ -1,4 +1,4 @@
-use super::{Animation, Armature, Bone, BoneTimeline, Curve, Keyframe};
+use super::{Animation, Armature, Bone, BoneTimeline, Interpolation, Keyframe};
 use egui::*;
 
 pub fn armature() -> Armature {
@@ -30,6 +30,7 @@ pub fn armature() -> Armature {
 }
 
 pub fn animation() -> Animation {
+    /*
     let bones = (0..40)
         .map(|i| BoneTimeline {
             label: format!("Bone #{}", i),
@@ -41,11 +42,11 @@ pub fn animation() -> Animation {
                     ((j + i) % 3 == 0).then(|| Keyframe {
                         time: j as u32,
                         curve: if (j + i) % 2 == 0 {
-                            Curve::Linear
+                            Interpolation::Linear
                         } else {
-                            Curve::Spline
+                            Interpolation::Spline
                         },
-                        data: [0.0; 2],
+                        value: vec2(0.0, 0.0),
                     })
                 })
                 .collect(),
@@ -55,11 +56,11 @@ pub fn animation() -> Animation {
                     ((j + i) % 5 == 0).then(|| Keyframe {
                         time: j as u32,
                         curve: if (j + i) % 2 == 0 {
-                            Curve::Linear
+                            Interpolation::Linear
                         } else {
-                            Curve::Spline
+                            Interpolation::Spline
                         },
-                        data: 0.0,
+                        value: 0.0,
                     })
                 })
                 .collect(),
@@ -69,16 +70,43 @@ pub fn animation() -> Animation {
                     ((j + i) % 7 == 0).then(|| Keyframe {
                         time: j as u32,
                         curve: if (j + i) % 2 == 0 {
-                            Curve::Linear
+                            Interpolation::Linear
                         } else {
-                            Curve::Spline
+                            Interpolation::Spline
                         },
-                        data: [1.0; 2],
+                        value: vec2(1.0, 1.0),
                     })
                 })
                 .collect(),
         })
         .collect();
+    */
+
+    let bones = vec![BoneTimeline {
+        label: String::from("bone0"),
+        open: false,
+        keys: vec![],
+        location: vec![],
+        rotation: vec![
+            Keyframe {
+                time: 0,
+                curve: Interpolation::Linear,
+                value: 0.0,
+            },
+            Keyframe {
+                time: 5,
+                curve: Interpolation::Linear,
+                value: std::f32::consts::FRAC_PI_2,
+            },
+            Keyframe {
+                time: 8,
+                curve: Interpolation::Linear,
+                value: std::f32::consts::PI,
+            },
+        ],
+        scale: vec![],
+        shear: vec![],
+    }];
 
     let name = String::from("some animation");
 

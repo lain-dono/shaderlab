@@ -1,5 +1,8 @@
 use super::{grid::Grid, Armature, Controller};
-use crate::ui::{icon, Style};
+use crate::ui::{icon, EditorTab, Style};
+use bevy::ecs::entity::Entity;
+use bevy::ecs::system::lifetimeless::{SRes, SResMut};
+use bevy::ecs::system::SystemParamItem;
 use egui::*;
 
 #[derive(PartialEq)]
@@ -30,19 +33,19 @@ impl Default for Animation2d {
 
             mode: Mode::Edit,
 
-            grid: Grid::new(),
+            grid: Grid::default(),
         }
     }
 }
 
-impl Animation2d {
-    pub fn run_ui(
-        &mut self,
-        ui: &mut Ui,
-        style: &Style,
+impl EditorTab for Animation2d {
+    type Param = (SRes<Style>, SResMut<Armature>, SResMut<Controller>);
 
-        armature: &mut Armature,
-        controller: &mut Controller,
+    fn ui<'w>(
+        &mut self,
+        ui: &mut egui::Ui,
+        _entity: Entity,
+        (style, armature, controller): &mut SystemParamItem<'w, '_, Self::Param>,
     ) {
         let frame = ui.available_rect_before_wrap();
         ui.painter().rect_filled(frame, 0.0, style.panel);
@@ -71,8 +74,6 @@ impl Animation2d {
                 let offset = vec2(-self.grid.offset.x, self.grid.offset.y);
                 let zoom = self.grid.zoom_factor;
                 let offset = frame.center() + offset * zoom;
-
-                controller.collect_world_transform(armature);
 
                 armature.paint_bones(ui.painter(), offset, zoom, &controller.world);
 

@@ -1,7 +1,8 @@
-use super::{
-    controller::PlayState, Animation, BoneTimeline, Controller, Curve, Keyframe, PlayControl,
-};
-use crate::ui::{icon, Style};
+use super::{Animation, BoneTimeline, Controller, Interpolation, Keyframe, PlayControl, PlayState};
+use crate::ui::{icon, EditorTab, Style};
+use bevy::ecs::entity::Entity;
+use bevy::ecs::system::lifetimeless::{SRes, SResMut};
+use bevy::ecs::system::SystemParamItem;
 use egui::*;
 
 const LINE_HEIGHT: f32 = 20.0;
@@ -28,89 +29,66 @@ const LOCATION_COLOR: Color32 = Color32::from_rgb(0x2E, 0xCC, 0x40);
 const ROTATION_COLOR: Color32 = Color32::from_rgb(0xFF, 0x41, 0x36);
 const SCALE_COLOR: Color32 = Color32::from_rgb(0xFF, 0x85, 0x1B);
 
-const ROW_WIDTH: f32 = 24.0;
+const ROW_WIDTH: f32 = 18.0;
 
-fn play_control(ui: &mut Ui, state: PlayState) -> Option<PlayControl> {
-    if ui.button(icon::TRIA_LEFT_BAR.to_string()).clicked() {
-        return Some(PlayControl::First);
-    }
-    if ui.button(icon::PREV_KEYFRAME.to_string()).clicked() {
-        return Some(PlayControl::Prev);
-    }
+#[derive(Default, bevy::prelude::Component)]
+pub struct TimelinePanel;
 
-    if matches!(state, PlayState::PlayReverse) {
-        if ui.button(icon::PAUSE.to_string()).clicked() {
-            return Some(PlayControl::Pause);
-        }
-    } else if ui.button(icon::PLAY_REVERSE.to_string()).clicked() {
-        return Some(PlayControl::PlayReverse);
-    }
+impl EditorTab for TimelinePanel {
+    type Param = (SRes<Style>, SResMut<Animation>, SResMut<Controller>);
 
-    if matches!(state, PlayState::Play) {
-        if ui.button(icon::PAUSE.to_string()).clicked() {
-            return Some(PlayControl::Pause);
-        }
-    } else if ui.button(icon::PLAY.to_string()).clicked() {
-        return Some(PlayControl::Play);
-    }
+    fn ui<'w>(
+        &mut self,
+        ui: &mut egui::Ui,
+        _entity: Entity,
+        (style, animation, controller): &mut SystemParamItem<'w, '_, Self::Param>,
+    ) {
+        let rect = ui.available_rect_before_wrap();
+        ui.painter().rect_filled(rect, 0.0, BONE_BG_COLOR);
 
-    if ui.button(icon::NEXT_KEYFRAME.to_string()).clicked() {
-        return Some(PlayControl::Next);
-    }
-    if ui.button(icon::TRIA_RIGHT_BAR.to_string()).clicked() {
-        return Some(PlayControl::Last);
-    }
-    None
-}
-
-pub fn run_ui(controller: &mut Controller, ui: &mut Ui, style: &Style, animation: &mut Animation) {
-    let rect = ui.available_rect_before_wrap();
-    ui.painter().rect_filled(rect, 0.0, BONE_BG_COLOR);
-
-    ui.scope(|ui| {
-        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-        style.set_theme_visuals(ui);
-
-        // title bar
         ui.scope(|ui| {
-            let max_width = ui.available_size_before_wrap().x;
-            let size = egui::vec2(max_width, HEADER_HEIGHT);
+            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+            style.set_theme_visuals(ui);
 
-            let bg_idx = ui.painter().add(Shape::Noop);
+            // title bar
+            ui.scope(|ui| {
+                let max_width = ui.available_size_before_wrap().x;
+                let size = egui::vec2(max_width, HEADER_HEIGHT);
 
-            let response = ui.allocate_ui(size, |ui| {
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
+                let bg_idx = ui.painter().add(Shape::Noop);
+
+                let response = ui.allocate_ui(size, |ui| {
                     ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
+                        ui.add_space(2.0);
 
-                    let prev_style = (*ui.ctx().style()).clone();
-                    let mut style = prev_style.clone();
+                        let prev_style = (*ui.ctx().style()).clone();
+                        let mut style = prev_style.clone();
 
-                    use egui::FontFamily::Proportional;
-                    use egui::TextStyle::*;
-                    style.text_styles = [
-                        (Body, FontId::new(CONTROL_SIZE, Proportional)),
-                        (Button, FontId::new(CONTROL_SIZE, Proportional)),
-                    ]
-                    .into();
-                    ui.ctx().set_style(style);
+                        use egui::FontFamily::Proportional;
+                        use egui::TextStyle::*;
+                        style.text_styles = [
+                            (Body, FontId::new(CONTROL_SIZE, Proportional)),
+                            (Button, FontId::new(CONTROL_SIZE, Proportional)),
+                        ]
+                        .into();
+                        ui.ctx().set_style(style);
 
-                    if let Some(control) = play_control(ui, controller.state) {
-                        controller.action(control);
-                    }
+                        if let Some(control) = play_control(ui, controller.state) {
+                            controller.action(control);
+                        }
 
-                    ui.ctx().set_style(prev_style);
+                        ui.ctx().set_style(prev_style);
+                    });
+                    ui.add_space(2.0);
                 });
-                ui.add_space(2.0);
-            });
 
-            let rect = response.response.rect;
-            let rect = Rect::from_min_size(rect.min, vec2(max_width, rect.height()));
-            ui.painter()
-                .set(bg_idx, Shape::rect_filled(rect, 0.0, style.panel));
+                let rect = response.response.rect;
+                let rect = Rect::from_min_size(rect.min, vec2(max_width, rect.height()));
+                let shape = Shape::rect_filled(rect, 0.0, style.panel);
+                ui.painter().set(bg_idx, shape);
 
-            {
                 let left_split = rect.min.x + LEFT_PADDING;
                 let rect = rect.intersect(Rect::everything_right_of(left_split));
 
@@ -166,23 +144,56 @@ pub fn run_ui(controller: &mut Controller, ui: &mut Ui, style: &Style, animation
                         );
                     }
                 }
-            }
+            });
+
+            style.for_scrollbar(ui);
+
+            let scroll = ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .id_source("Timeline ScrollArea");
+
+            scroll.show(ui, |ui| {
+                style.scrollarea(ui);
+
+                for bone in &mut animation.bones {
+                    bone.draw(ui, style, controller.current_time);
+                }
+            });
         });
+    }
+}
 
-        style.for_scrollbar(ui);
+fn play_control(ui: &mut Ui, state: PlayState) -> Option<PlayControl> {
+    if ui.button(icon::TRIA_LEFT_BAR.to_string()).clicked() {
+        return Some(PlayControl::First);
+    }
+    if ui.button(icon::PREV_KEYFRAME.to_string()).clicked() {
+        return Some(PlayControl::Prev);
+    }
 
-        let scroll = ScrollArea::vertical()
-            .auto_shrink([false; 2])
-            .id_source("Timeline ScrollArea");
+    if matches!(state, PlayState::PlayReverse) {
+        if ui.button(icon::PAUSE.to_string()).clicked() {
+            return Some(PlayControl::Pause);
+        }
+    } else if ui.button(icon::PLAY_REVERSE.to_string()).clicked() {
+        return Some(PlayControl::PlayReverse);
+    }
 
-        scroll.show(ui, |ui| {
-            style.scrollarea(ui);
+    if matches!(state, PlayState::Play) {
+        if ui.button(icon::PAUSE.to_string()).clicked() {
+            return Some(PlayControl::Pause);
+        }
+    } else if ui.button(icon::PLAY.to_string()).clicked() {
+        return Some(PlayControl::Play);
+    }
 
-            for bone in &mut animation.bones {
-                bone.draw(ui, style, controller.current_time);
-            }
-        });
-    });
+    if ui.button(icon::NEXT_KEYFRAME.to_string()).clicked() {
+        return Some(PlayControl::Next);
+    }
+    if ui.button(icon::TRIA_RIGHT_BAR.to_string()).clicked() {
+        return Some(PlayControl::Last);
+    }
+    None
 }
 
 impl<T> Keyframe<T> {
@@ -349,17 +360,17 @@ impl BoneTimeline {
                 start: Pos2,
                 curr: f32,
                 next: Option<f32>,
-                curve: Curve,
+                curve: Interpolation,
             ) {
                 if let Some(next) = next {
                     let a = start + vec2(curr, LINE_HEIGHT - 1.0);
                     let b = start + vec2(next, 1.0);
                     let color = CURVE_COLOR.linear_multiply(CURVE_COLOR_FACTOR);
                     match curve {
-                        Curve::Linear => {
+                        Interpolation::Linear => {
                             ui.painter().line_segment([a, b], (px, color));
                         }
-                        Curve::Spline => {
+                        Interpolation::Spline => {
                             let shape = egui::epaint::CubicBezierShape {
                                 points: [
                                     a,

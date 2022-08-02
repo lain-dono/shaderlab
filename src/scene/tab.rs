@@ -6,7 +6,7 @@ use bevy::ecs::system::lifetimeless::{SQuery, SRes, SResMut};
 use bevy::ecs::system::SystemParamItem;
 use bevy::prelude::*;
 use bevy::reflect::TypeRegistry;
-use bevy::render::camera::CameraProjection;
+use bevy::render::camera::{CameraProjection, Projection};
 
 struct Drag {
     delta: egui::Vec2,
@@ -30,11 +30,8 @@ struct InputState {
 #[derive(Component)]
 pub struct SceneTab {
     pub texture_id: Option<egui::TextureId>,
-    pub camera_proj: PerspectiveProjection,
-
     pub yew: f32,
     pub pitch: f32,
-
     pub zsorting: Vec<(f32, egui::Pos2, usize)>,
 }
 
@@ -45,14 +42,14 @@ impl EditorTab for SceneTab {
         SResMut<Assets<ReflectScene>>,
         SRes<TypeRegistry>,
         SResMut<AssetServer>,
-        SQuery<&'static mut Transform>,
+        SQuery<(&'static mut Transform, &'static mut Projection)>,
     );
 
     fn ui<'w>(
         &mut self,
         ui: &mut egui::Ui,
         entity: Entity,
-        (scene, state, scenes, types, assets, transform): &mut SystemParamItem<'w, '_, Self::Param>,
+        (scene, state, scenes, types, assets, query): &mut SystemParamItem<'w, '_, Self::Param>,
     ) {
         let scene = scenes.get_mut(scene).unwrap();
         let mut ctx = EditorContext {
@@ -62,7 +59,7 @@ impl EditorTab for SceneTab {
             assets,
         };
 
-        let mut camera_view = transform.get_mut(entity).unwrap();
+        let (mut camera_view, mut camera_proj) = query.get_mut(entity).unwrap();
 
         let scale = ui.ctx().pixels_per_point();
         let size_ui = ui.available_size_before_wrap();
@@ -108,27 +105,29 @@ impl EditorTab for SceneTab {
                 let pan_speed = 25.0;
                 let rot_speed = 2.0;
 
-                self.camera_proj.update(size_px.x, size_px.y);
+                camera_proj.update(size_px.x, size_px.y);
 
-                if let Some(drag) = state.drag.take() {
-                    let delta = drag.delta / size_px;
-                    let ratio = self.camera_proj.aspect_ratio;
-                    let fov = self.camera_proj.fov;
-                    match drag.button {
-                        egui::PointerButton::Middle => {
-                            let pan = delta * egui::Vec2::new(fov * ratio, fov);
-                            let right = camera_view.rotation * Vec3::X * -pan.x;
-                            let up = camera_view.rotation * Vec3::Y * pan.y;
-                            camera_view.translation += (right + up) * pan_speed;
-                        }
-                        egui::PointerButton::Secondary => {
-                            self.yew += delta.x * fov * ratio * rot_speed;
-                            self.pitch += delta.y * fov * rot_speed;
+                if let Projection::Perspective(proj) = camera_proj.as_mut() {
+                    if let Some(drag) = state.drag.take() {
+                        let delta = drag.delta / size_px;
+                        let ratio = proj.aspect_ratio;
+                        let fov = proj.fov;
+                        match drag.button {
+                            egui::PointerButton::Middle => {
+                                let pan = delta * egui::Vec2::new(fov * ratio, fov);
+                                let right = camera_view.rotation * Vec3::X * -pan.x;
+                                let up = camera_view.rotation * Vec3::Y * pan.y;
+                                camera_view.translation += (right + up) * pan_speed;
+                            }
+                            egui::PointerButton::Secondary => {
+                                self.yew += delta.x * fov * ratio * rot_speed;
+                                self.pitch += delta.y * fov * rot_speed;
 
-                            camera_view.rotation =
-                                Quat::from_euler(EulerRot::YXZ, self.yew, self.pitch, 0.0);
+                                camera_view.rotation =
+                                    Quat::from_euler(EulerRot::YXZ, self.yew, self.pitch, 0.0);
+                            }
+                            _ => (),
                         }
-                        _ => (),
                     }
                 }
 
@@ -148,7 +147,7 @@ impl EditorTab for SceneTab {
                 camera_view.translation += movement * input.predicted_dt * mov_speed;
             }
 
-            let proj = self.camera_proj.get_projection_matrix();
+            let proj = camera_proj.get_projection_matrix();
             let view = camera_view.compute_matrix().inverse();
             let world_to_ndc = proj * view;
             let ndc_to_world = view.inverse() * proj.inverse();
@@ -204,7 +203,7 @@ impl EditorTab for SceneTab {
                 }
             };
 
-            let screen_to_world = |screen: egui::Pos2, z: f32| {
+            let _screen_to_world = |screen: egui::Pos2, z: f32| {
                 let local = ((screen - screen_rect.min) * 2.0) / size_ui;
                 ndc_to_world.project_point3(Vec3::new(local.x - 1.0, 1.0 - local.y, 1.0 - z))
             };
@@ -427,7 +426,6 @@ impl SceneTab {
             })
             .insert(Self {
                 texture_id: None,
-                camera_proj: PerspectiveProjection::default(),
 
                 yew: 0.0,
                 pitch: 0.0,

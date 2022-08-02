@@ -4,6 +4,7 @@
 
 pub mod anymap;
 pub mod reflect;
+pub mod slice;
 
 pub fn enable_tracing() {
     use tracing_subscriber::{fmt, EnvFilter};

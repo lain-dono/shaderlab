@@ -9,13 +9,13 @@ impl undo::Action for AddBone {
     type Output = ();
     type Error = ();
 
-    fn apply(&mut self, target: &mut Self::Target) -> undo::Result<Self> {
+    fn apply(&mut self, _target: &mut Self::Target) -> undo::Result<Self> {
         //s.push(self.0);
         //target.add_bone(self.bone);
         Ok(())
     }
 
-    fn undo(&mut self, target: &mut Self::Target) -> undo::Result<Self> {
+    fn undo(&mut self, _target: &mut Self::Target) -> undo::Result<Self> {
         //self.0 = s.pop().ok_or("s is empty")?;
         Ok(())
     }

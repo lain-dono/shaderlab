@@ -1,18 +1,26 @@
 use egui::*;
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Bounds {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+}
+
 pub struct Grid {
     pub zoom_factor: f32,
     pub offset: Vec2,
 }
 
-impl Grid {
-    pub fn new() -> Self {
+impl Default for Grid {
+    fn default() -> Self {
         Self {
             zoom_factor: 1.0,
             offset: Vec2::ZERO,
         }
     }
+}
 
+impl Grid {
     pub fn update(&mut self, ui: &mut Ui, frame: Rect) {
         let input = ui.input();
 
@@ -241,10 +249,4 @@ impl Grid {
 
         Bounds { min, max }
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct Bounds {
-    pub min: [f32; 2],
-    pub max: [f32; 2],
 }

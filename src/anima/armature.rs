@@ -14,6 +14,7 @@ bitflags::bitflags! {
 
 pub struct Bone {
     pub name: String,
+
     pub rotation: f32,
     pub location: Pos2,
     pub scale: Vec2,
@@ -39,23 +40,6 @@ impl Default for Bone {
             parent: u32::max_value(),
 
             flags: BoneFlags::empty(),
-        }
-    }
-}
-
-impl Bone {
-    pub fn local_matrix(&self) -> Matrix {
-        let (sx, cx) = (self.rotation - self.shear.x).sin_cos();
-        let (sy, cy) = (self.rotation + self.shear.y).sin_cos();
-        let sx = -sx;
-
-        Matrix {
-            a: cy * self.scale.x,
-            b: sy * self.scale.x,
-            c: sx * self.scale.y,
-            d: cx * self.scale.y,
-            tx: self.location.x,
-            ty: self.location.y,
         }
     }
 }
