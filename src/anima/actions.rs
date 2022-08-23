@@ -1,22 +1,24 @@
-use super::{Armature, Bone};
+use super::{Armature, Transform};
 
-pub struct AddBone {
-    pub bone: Bone,
+pub struct TransformBone {
+    pub bone: usize,
+    pub transform: Transform,
 }
 
-impl undo::Action for AddBone {
+impl undo::Action for TransformBone {
     type Target = Armature;
     type Output = ();
     type Error = ();
 
-    fn apply(&mut self, _target: &mut Self::Target) -> undo::Result<Self> {
-        //s.push(self.0);
-        //target.add_bone(self.bone);
+    fn apply(&mut self, target: &mut Self::Target) -> undo::Result<Self> {
+        let bone = &mut target.bones[self.bone];
+        bone.transform = bone.transform.mul_transform(self.transform);
         Ok(())
     }
 
-    fn undo(&mut self, _target: &mut Self::Target) -> undo::Result<Self> {
-        //self.0 = s.pop().ok_or("s is empty")?;
+    fn undo(&mut self, target: &mut Self::Target) -> undo::Result<Self> {
+        let bone = &mut target.bones[self.bone];
+        bone.transform = bone.transform.mul_transform(self.transform.inverse());
         Ok(())
     }
 }

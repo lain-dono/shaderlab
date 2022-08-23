@@ -425,7 +425,6 @@ where
     S: Serialize,
 {
     let config = ron::ser::PrettyConfig::default()
-        .decimal_floats(true)
         .struct_names(false)
         .indentor("  ".to_string())
         .new_line("\n".to_string());

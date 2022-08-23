@@ -1,8 +1,8 @@
 use super::context::{EditorContext, ReflectEntityGetters};
 use super::{component::ProxyPointLight, ReflectScene, SceneMapping};
-use crate::ui::{icon, EditorPanel, EditorTab};
+use crate::ui::{icon, EditorPanel, EditorTab, PanelRenderTarget};
 use crate::util::anymap::AnyMap;
-use bevy::ecs::system::lifetimeless::{SQuery, SRes, SResMut};
+use bevy::ecs::system::lifetimeless::{Read, SQuery, SRes, SResMut, Write};
 use bevy::ecs::system::SystemParamItem;
 use bevy::prelude::*;
 use bevy::reflect::TypeRegistry;
@@ -29,7 +29,6 @@ struct InputState {
 
 #[derive(Component)]
 pub struct SceneTab {
-    pub texture_id: Option<egui::TextureId>,
     pub yew: f32,
     pub pitch: f32,
     pub zsorting: Vec<(f32, egui::Pos2, usize)>,
@@ -42,7 +41,7 @@ impl EditorTab for SceneTab {
         SResMut<Assets<ReflectScene>>,
         SRes<TypeRegistry>,
         SResMut<AssetServer>,
-        SQuery<(&'static mut Transform, &'static mut Projection)>,
+        SQuery<(Write<Transform>, Write<Projection>, Read<PanelRenderTarget>)>,
     );
 
     fn ui<'w>(
@@ -59,13 +58,13 @@ impl EditorTab for SceneTab {
             assets,
         };
 
-        let (mut camera_view, mut camera_proj) = query.get_mut(entity).unwrap();
+        let (mut camera_view, mut camera_proj, target) = query.get_mut(entity).unwrap();
 
         let scale = ui.ctx().pixels_per_point();
         let size_ui = ui.available_size_before_wrap();
         let size_px = size_ui * scale;
 
-        if let Some(texture_id) = self.texture_id {
+        if let Some(texture_id) = target.texture_id {
             let response = ui.add(egui::widgets::Image::new(texture_id, size_ui));
             let response = response.interact(egui::Sense::click_and_drag());
 
@@ -373,43 +372,16 @@ impl super::gizmo::Lines {
 }
 
 impl SceneTab {
-    pub fn spawn(commands: &mut Commands, images: &mut Assets<Image>) -> bevy::prelude::Entity {
+    pub fn spawn(commands: &mut Commands, images: &mut Assets<Image>) -> crate::ui::Tab {
         use bevy::core_pipeline::clear_color::ClearColorConfig;
         use bevy::prelude::*;
-        use bevy::render::camera::RenderTarget;
-        use bevy::render::render_resource::*;
 
-        let size = Extent3d {
-            width: 1,
-            height: 1,
-            ..default()
-        };
+        let target = PanelRenderTarget::create_render_target(images);
 
-        // This is the texture that will be rendered to.
-        let mut image = Image {
-            texture_descriptor: TextureDescriptor {
-                label: None,
-                size,
-                dimension: TextureDimension::D2,
-                format: TextureFormat::Bgra8UnormSrgb,
-                mip_level_count: 1,
-                sample_count: 1,
-                usage: TextureUsages::TEXTURE_BINDING
-                    | TextureUsages::COPY_DST
-                    | TextureUsages::RENDER_ATTACHMENT,
-            },
-            ..default()
-        };
-
-        // fill image.data with zeroes
-        image.resize(size);
-
-        let handle = images.add(image);
-        let target = RenderTarget::Image(handle);
         let gray = 0x2B as f32 / 255.0;
         let clear_color = Color::rgba(gray, gray, gray, 1.0);
 
-        commands
+        let entity = commands
             .spawn_bundle(Camera3dBundle {
                 camera_3d: Camera3d {
                     clear_color: ClearColorConfig::Custom(clear_color),
@@ -425,14 +397,15 @@ impl SceneTab {
                 ..default()
             })
             .insert(Self {
-                texture_id: None,
-
                 yew: 0.0,
                 pitch: 0.0,
 
                 zsorting: Vec::new(),
             })
             .insert(EditorPanel::default())
-            .id()
+            .insert(PanelRenderTarget::default())
+            .id();
+
+        crate::ui::Tab::new(icon::VIEW3D, "Scene", entity)
     }
 }

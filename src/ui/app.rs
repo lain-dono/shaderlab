@@ -349,7 +349,7 @@ pub fn ui_root(
                     shared.hover = ui.input().pointer.hover_pos().map(|pointer| HoverData {
                         rect,
                         dst: tree_index,
-                        tabs: tabs_response.hovered().then(|| tabs_response.rect),
+                        tabs: tabs_response.hovered().then_some(tabs_response.rect),
                         pointer,
                     });
                 }
@@ -379,7 +379,7 @@ pub fn ui_tabs(tree: Res<SplitTree>, mut panels: Query<&mut EditorPanel>) {
             for (tab_index, tab) in tabs.iter().enumerate() {
                 if let Ok(mut panel) = panels.get_mut(tab.entity) {
                     *panel = EditorPanel {
-                        viewport: (tab_index == *active).then(|| *viewport),
+                        viewport: (tab_index == *active).then_some(*viewport),
                         //node: NodeIndex(node_index),
                         //tab: tab_index,
                     }

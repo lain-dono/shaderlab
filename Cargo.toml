@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+reui = { version = "0.0.1", features = ["bevy"] }
+
 bitflags = "1"
 slotmap = "1"
 arrayvec = "0.7"
@@ -24,7 +26,7 @@ downcast-rs = "1.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-ahash = "0.7.6"
+ahash = "0.8.0"
 sublime_fuzzy = "0.7.0"
 
 undo = "0.47"
@@ -37,7 +39,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 serde = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
-ron = "0.7"
+ron = "0.8"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 arboard = "2.0.1"

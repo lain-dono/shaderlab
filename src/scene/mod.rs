@@ -33,8 +33,7 @@ impl Plugin for ScenePlugin {
             .add_system_to_stage(
                 CoreStage::PreUpdate,
                 scene_spawner_system.exclusive_system().at_end(),
-            )
-            .add_system(update_scene_render_target.after(crate::ui::app::ui_root));
+            );
     }
 }
 
@@ -57,37 +56,4 @@ pub fn scene_spawner_system(world: &mut World) {
         spawner.update_spawned(world, &handles).unwrap();
         spawner.set_scene_instance_parent_sync(world);
     });
-}
-
-use bevy::render::camera::{Camera, RenderTarget};
-
-pub fn update_scene_render_target(
-    mut context: ResMut<crate::ui::shell::EguiContext>,
-    mut images: ResMut<Assets<Image>>,
-    mut query: Query<(&mut SceneTab, &crate::ui::EditorPanel, &Camera)>,
-) {
-    let [ctx] = context.ctx_mut([bevy::window::WindowId::primary()]);
-    let ppi = ctx.pixels_per_point();
-
-    for (mut scene, tab, camera) in query.iter_mut() {
-        let handle = if let RenderTarget::Image(handle) = &camera.target {
-            handle
-        } else {
-            continue;
-        };
-
-        if let Some(image) = images.get_mut(handle) {
-            if let Some(viewport) = tab.viewport {
-                let width = (viewport.width() * ppi) as u32;
-                let height = (viewport.height() * ppi) as u32;
-                scene.texture_id = Some(context.add_image(handle.clone_weak()));
-
-                image.resize(wgpu::Extent3d {
-                    width: width.max(1),
-                    height: height.max(1),
-                    ..default()
-                });
-            }
-        }
-    }
 }

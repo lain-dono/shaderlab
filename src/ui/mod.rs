@@ -13,6 +13,7 @@ pub use self::tabs::{NodeIndex, Split, SplitTree, Tab, TreeNode};
 
 use bevy::ecs::system::StaticSystemParam;
 use bevy::prelude::*;
+use bevy::render::camera::RenderTarget;
 use bevy::render::{render_graph::RenderGraph, RenderApp};
 use bevy::window::WindowId;
 
@@ -50,6 +51,7 @@ impl bevy::app::Plugin for EditorUiPlugin {
                 SystemStage::parallel(),
             )
             .add_system_to_stage(EditorStage::Root, ui_root)
+            .add_system_to_stage(EditorStage::Root, update_panel_render_target.after(ui_root))
             .add_system_to_stage(EditorStage::Finish, ui_tabs)
             .add_system_to_stage(EditorStage::Finish, ui_finish.after(ui_tabs))
             .add_editor_tab::<PlaceholderTab>();
@@ -118,5 +120,72 @@ impl AddEditorTab for bevy::app::App {
 
         self.add_system_to_stage(EditorStage::Tabs, system::<T>);
         self
+    }
+}
+
+#[derive(Default, Component)]
+pub struct PanelRenderTarget {
+    pub texture_id: Option<egui::TextureId>,
+}
+
+impl PanelRenderTarget {
+    pub fn create_render_target(images: &mut Assets<Image>) -> RenderTarget {
+        let size = wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        };
+
+        let mut image = Image {
+            texture_descriptor: wgpu::TextureDescriptor {
+                label: None,
+                size,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                mip_level_count: 1,
+                sample_count: 1,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            },
+            ..default()
+        };
+
+        // fill image.data with zeroes
+        image.resize(size);
+
+        RenderTarget::Image(images.add(image))
+    }
+}
+
+pub fn update_panel_render_target(
+    mut context: ResMut<self::shell::EguiContext>,
+    mut images: ResMut<Assets<Image>>,
+    mut query: Query<(&mut PanelRenderTarget, &EditorPanel, &Camera)>,
+) {
+    let [ctx] = context.ctx_mut([bevy::window::WindowId::primary()]);
+    let ppi = ctx.pixels_per_point();
+
+    for (mut panel, tab, camera) in query.iter_mut() {
+        let handle = if let RenderTarget::Image(handle) = &camera.target {
+            handle
+        } else {
+            continue;
+        };
+
+        if let Some(image) = images.get_mut(handle) {
+            if let Some(viewport) = tab.viewport {
+                let width = (viewport.width() * ppi) as u32;
+                let height = (viewport.height() * ppi) as u32;
+
+                panel.texture_id = Some(context.add_image(handle.clone_weak()));
+
+                image.resize(wgpu::Extent3d {
+                    width: width.max(1),
+                    height: height.max(1),
+                    depth_or_array_layers: 1,
+                });
+            }
+        }
     }
 }

@@ -1,4 +1,4 @@
-use crate::ui::{icon, Style, EditorTab};
+use crate::ui::{icon, EditorTab, Style};
 use bevy::asset::AssetIo;
 use bevy::ecs::system::lifetimeless::SRes;
 use bevy::ecs::system::SystemParamItem;

@@ -57,7 +57,7 @@ fn main() {
     app.add_editor_tab::<self::scene::Inspector>();
     app.add_editor_tab::<self::scene::SceneTab>();
 
-    app.add_plugin(self::anima::Anima);
+    app.add_plugin(self::anima::AnimaPlugin);
 
     app.add_startup_system(setup);
 
@@ -84,15 +84,15 @@ fn setup(
     }
 
     trait SpawnTab {
-        fn spawn_tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab;
+        fn tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab;
 
-        fn spawn_placeholder(&mut self, icon: char, title: &str) -> Tab {
-            self.spawn_tab(icon, title, PlaceholderTab::default())
+        fn placeholder(&mut self, icon: char, title: &str) -> Tab {
+            self.tab(icon, title, PlaceholderTab::default())
         }
     }
 
     impl<'s, 'w> SpawnTab for Commands<'s, 'w> {
-        fn spawn_tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab {
+        fn tab<T: Component>(&mut self, icon: char, title: &str, tab: T) -> Tab {
             let entity = self
                 .spawn()
                 .insert_bundle((EditorPanel::default(), tab))
@@ -101,19 +101,19 @@ fn setup(
         }
     }
 
-    let node_tree = commands.spawn_placeholder(icon::NODETREE, "Node Tree");
+    let node_tree = commands.placeholder(icon::NODETREE, "Node Tree");
 
-    let scene_entity = SceneTab::spawn(&mut commands, &mut images);
-    let scene = Tab::new(icon::VIEW3D, "Scene", scene_entity);
+    let scene = SceneTab::spawn(&mut commands, &mut images);
 
-    let hierarchy = commands.spawn_tab(icon::OUTLINER, "Hierarchy", Hierarchy::default());
-    let inspector = commands.spawn_tab(icon::PROPERTIES, "Inspector", Inspector::default());
-    let files = commands.spawn_tab(icon::FILEBROWSER, "File Browser", FileBrowser::default());
+    let hierarchy = commands.tab(icon::OUTLINER, "Hierarchy", Hierarchy::default());
+    let inspector = commands.tab(icon::PROPERTIES, "Inspector", Inspector::default());
+    let files = commands.tab(icon::FILEBROWSER, "File Browser", FileBrowser::default());
 
-    let assets = commands.spawn_placeholder(icon::ASSET_MANAGER, "Asset Manager");
+    let assets = commands.placeholder(icon::ASSET_MANAGER, "Asset Manager");
 
-    let anim = commands.spawn_tab(icon::VIEW_ORTHO, "Animate 2d", Animation2d::default());
-    let timeline = commands.spawn_tab(icon::TIME, "Timeline", TimelinePanel::default());
+    let anim = Animation2d::spawn(&mut commands, &mut images);
+
+    let timeline = commands.tab(icon::TIME, "Timeline", TimelinePanel::default());
 
     let root = TreeNode::leaf_with(vec![anim, scene, node_tree]);
     let mut split_tree = SplitTree::new(root);

@@ -25,9 +25,10 @@ const KEYFRAME_SIZE: f32 = 16.0;
 
 const CONTROL_SIZE: f32 = 20.0;
 
-const LOCATION_COLOR: Color32 = Color32::from_rgb(0x2E, 0xCC, 0x40);
-const ROTATION_COLOR: Color32 = Color32::from_rgb(0xFF, 0x41, 0x36);
+const TRANSLATE_COLOR: Color32 = Color32::from_rgb(0x2E, 0xCC, 0x40);
+const ROTATE_COLOR: Color32 = Color32::from_rgb(0xFF, 0x41, 0x36);
 const SCALE_COLOR: Color32 = Color32::from_rgb(0xFF, 0x85, 0x1B);
+const SHEAR_COLOR: Color32 = Color32::from_rgb(0xFF, 0x85, 0x1B);
 
 const ROW_WIDTH: f32 = 18.0;
 
@@ -76,7 +77,7 @@ impl EditorTab for TimelinePanel {
                         ui.ctx().set_style(style);
 
                         if let Some(control) = play_control(ui, controller.state) {
-                            controller.action(control);
+                            controller.action(control, animation.duration());
                         }
 
                         ui.ctx().set_style(prev_style);
@@ -196,33 +197,39 @@ fn play_control(ui: &mut Ui, state: PlayState) -> Option<PlayControl> {
     None
 }
 
-impl<T> Keyframe<T> {
-    fn position(&self) -> f32 {
-        ROW_WIDTH * self.time as f32
-    }
-}
-
 impl BoneTimeline {
-    fn show_location(&self) -> bool {
-        !self.location.is_empty()
+    fn show_translate(&self) -> bool {
+        !self.translate.is_empty()
     }
 
-    fn show_rotation(&self) -> bool {
-        !self.rotation.is_empty()
+    fn show_rotate(&self) -> bool {
+        !self.rotate.is_empty()
     }
 
     fn show_scale(&self) -> bool {
         !self.scale.is_empty()
     }
 
+    fn show_shear(&self) -> bool {
+        !self.shear.is_empty()
+    }
+
     fn extra_lines(&self) -> usize {
-        self.show_rotation() as usize + self.show_location() as usize + self.show_scale() as usize
+        self.show_rotate() as usize
+            + self.show_translate() as usize
+            + self.show_scale() as usize
+            + self.show_shear() as usize
     }
 
     fn draw(&mut self, ui: &mut egui::Ui, style: &Style, current_time: u32) {
+        let extra = self.extra_lines();
+        if extra == 0 {
+            return;
+        }
+
         let id = Id::new(&self.label).with("_bone");
 
-        let lines = 1 + if self.open { self.extra_lines() } else { 0 };
+        let lines = 1 + if self.open { extra } else { 0 };
         let max_width = ui.available_size_before_wrap().x;
         let desired_size = vec2(max_width, LINE_HEIGHT * lines as f32);
 
@@ -289,16 +296,20 @@ impl BoneTimeline {
                 ui.painter().galley(pos, galley);
             }
 
-            if self.show_rotation() {
-                draw_label(ui, start, ROTATION_COLOR, "rotation");
+            if self.show_rotate() {
+                draw_label(ui, start, ROTATE_COLOR, "rotate");
                 start.y += LINE_HEIGHT;
             }
-            if self.show_location() {
-                draw_label(ui, start, LOCATION_COLOR, "location");
+            if self.show_translate() {
+                draw_label(ui, start, TRANSLATE_COLOR, "translate");
                 start.y += LINE_HEIGHT;
             }
             if self.show_scale() {
                 draw_label(ui, start, SCALE_COLOR, "scale");
+                start.y += LINE_HEIGHT;
+            }
+            if self.show_shear() {
+                draw_label(ui, start, SHEAR_COLOR, "shear");
                 start.y += LINE_HEIGHT;
             }
         }
@@ -339,7 +350,8 @@ impl BoneTimeline {
 
             let px = ui.ctx().pixels_per_point().recip();
 
-            fn widget(ui: &mut Ui, start: Pos2, curr: f32, id: Id, color: Color32) {
+            fn widget(ui: &mut Ui, start: Pos2, curr: u32, id: Id, color: Color32) {
+                let curr = ROW_WIDTH * curr as f32;
                 let rect = egui::Rect {
                     min: start + vec2(curr - ROW_WIDTH / 2.0, 0.0),
                     max: start + vec2(curr + ROW_WIDTH / 2.0, LINE_HEIGHT),
@@ -354,75 +366,42 @@ impl BoneTimeline {
                 draw_bar(ui, response.rect, color);
             }
 
-            fn draw_curve(
-                px: f32,
-                ui: &mut Ui,
-                start: Pos2,
-                curr: f32,
-                next: Option<f32>,
-                curve: Interpolation,
-            ) {
-                if let Some(next) = next {
-                    let a = start + vec2(curr, LINE_HEIGHT - 1.0);
-                    let b = start + vec2(next, 1.0);
-                    let color = CURVE_COLOR.linear_multiply(CURVE_COLOR_FACTOR);
-                    match curve {
-                        Interpolation::Linear => {
-                            ui.painter().line_segment([a, b], (px, color));
-                        }
-                        Interpolation::Spline => {
-                            let shape = egui::epaint::CubicBezierShape {
-                                points: [
-                                    a,
-                                    a - vec2(0.0, LINE_HEIGHT),
-                                    b + vec2(0.0, LINE_HEIGHT),
-                                    b,
-                                ],
-                                closed: false,
-                                fill: Color32::TRANSPARENT,
-                                stroke: (px, color).into(),
-                            };
-                            ui.painter().add(shape);
-                        }
-                    }
-                }
-            }
-
-            if self.show_rotation() {
-                for curr_index in 0..self.rotation.len() {
-                    let curr = &self.rotation[curr_index];
-                    let curve = curr.curve;
-                    let id = id.with("rotation").with(curr.time);
-                    let curr = curr.position();
-                    let next = self.rotation.get(curr_index + 1).map(Keyframe::position);
-                    draw_curve(px, ui, start, curr, next, curve);
-                    widget(ui, start, curr, id, ROTATION_COLOR);
+            if self.show_rotate() {
+                for curr_index in 0..self.rotate.len() {
+                    let (current, curve, next) = self.rotate.get(curr_index);
+                    let id = id.with("rotate").with(current);
+                    draw_curve(px, ui, start, current, next, curve);
+                    widget(ui, start, current, id, ROTATE_COLOR);
                 }
                 start.y += LINE_HEIGHT;
             }
 
-            if self.show_location() {
-                for curr_index in 0..self.location.len() {
-                    let curr = &self.location[curr_index];
-                    let curve = curr.curve;
-                    let id = id.with("location").with(curr.time);
-                    let curr = curr.position();
-                    let next = self.location.get(curr_index + 1).map(Keyframe::position);
-                    draw_curve(px, ui, start, curr, next, curve);
-                    widget(ui, start, curr, id, LOCATION_COLOR);
+            if self.show_translate() {
+                for curr_index in 0..self.translate.len() {
+                    let (current, curve, next) = self.translate.get(curr_index);
+                    let id = id.with("translate").with(current);
+                    draw_curve(px, ui, start, current, next, curve);
+                    widget(ui, start, current, id, TRANSLATE_COLOR);
                 }
                 start.y += LINE_HEIGHT;
             }
 
             if self.show_scale() {
                 for curr_index in 0..self.scale.len() {
-                    let curr = &self.scale[curr_index];
-                    let curve = curr.curve;
-                    let id = id.with("scale").with(curr.time);
-                    let curr = curr.position();
-                    let next = self.scale.get(curr_index + 1).map(Keyframe::position);
-                    draw_curve(px, ui, start, curr, next, curve);
-                    widget(ui, start, curr, id, SCALE_COLOR);
+                    let (current, curve, next) = self.scale.get(curr_index);
+                    let id = id.with("scale").with(current);
+                    draw_curve(px, ui, start, current, next, curve);
+                    widget(ui, start, current, id, SCALE_COLOR);
+                }
+                start.y += LINE_HEIGHT;
+            }
+
+            if self.show_shear() {
+                for curr_index in 0..self.shear.len() {
+                    let (current, curve, next) = self.shear.get(curr_index);
+                    let id = id.with("shear").with(current);
+                    draw_curve(px, ui, start, current, next, curve);
+                    widget(ui, start, current, id, SHEAR_COLOR);
                 }
                 start.y += LINE_HEIGHT;
             }
@@ -466,4 +445,34 @@ fn draw_bar(ui: &mut Ui, rect: Rect, color: Color32) {
     let sx = rect.width() / 2.0 - 0.5 - px;
     let bar_rect = rect.shrink2(vec2(sx, 0.0));
     ui.painter().rect_filled(bar_rect, 0.0, color);
+}
+
+fn draw_curve<T>(
+    px: f32,
+    ui: &mut Ui,
+    start: Pos2,
+    current: u32,
+    next: Option<u32>,
+    curve: Interpolation<T>,
+) {
+    if let Some(next) = next {
+        let current = ROW_WIDTH * current as f32;
+        let next = ROW_WIDTH * next as f32;
+
+        let a = start + vec2(current, LINE_HEIGHT - 1.0);
+        let b = start + vec2(next, 1.0);
+        let color = CURVE_COLOR.linear_multiply(CURVE_COLOR_FACTOR);
+        match curve {
+            Interpolation::Linear => ui.painter().line_segment([a, b], (px, color)),
+            Interpolation::Spline(_, _) => {
+                let shape = egui::epaint::CubicBezierShape {
+                    points: [a, a - vec2(0.0, LINE_HEIGHT), b + vec2(0.0, LINE_HEIGHT), b],
+                    closed: false,
+                    fill: Color32::TRANSPARENT,
+                    stroke: (px, color).into(),
+                };
+                ui.painter().add(shape);
+            }
+        }
+    }
 }

@@ -1,3 +1,4 @@
+use super::Matrix;
 use egui::*;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -6,21 +7,51 @@ pub struct Bounds {
     pub max: [f32; 2],
 }
 
+#[derive(Clone, Copy)]
+pub struct GridViewport {
+    pub frame: Rect,
+    pub offset: Pos2,
+    pub zoom: f32,
+    pub pointer: Option<Pos2>,
+}
+
+impl GridViewport {
+    pub fn matrix(&self) -> Matrix {
+        Matrix {
+            a: self.zoom,
+            b: 0.0,
+            c: 0.0,
+            d: -self.zoom,
+            tx: self.offset.x,
+            ty: self.offset.y,
+        }
+    }
+}
+
 pub struct Grid {
-    pub zoom_factor: f32,
     pub offset: Vec2,
+    pub zoom: f32,
 }
 
 impl Default for Grid {
     fn default() -> Self {
         Self {
-            zoom_factor: 1.0,
             offset: Vec2::ZERO,
+            zoom: 1.0,
         }
     }
 }
 
 impl Grid {
+    pub fn viewport(&self, pointer: Option<Pos2>, frame: Rect) -> GridViewport {
+        GridViewport {
+            offset: frame.center() + self.offset * vec2(-self.zoom, self.zoom),
+            zoom: self.zoom,
+            pointer,
+            frame,
+        }
+    }
+
     pub fn update(&mut self, ui: &mut Ui, frame: Rect) {
         let input = ui.input();
 
@@ -28,27 +59,24 @@ impl Grid {
 
         if let Some(cursor) = cursor {
             let mut zoom_delta = 1.0;
-
             for event in &input.events {
                 if let Event::Scroll(scroll) = event {
-                    //let factor = (scroll.y / 200.0).exp();
-                    let factor = (scroll.y / 500.0).exp();
-                    zoom_delta *= factor;
+                    zoom_delta *= (scroll.y / 500.0).exp();
                 }
             }
 
-            let prev = self.zoom_factor;
-            self.zoom_factor *= zoom_delta;
-            self.zoom_factor = self.zoom_factor.clamp(0.25, 8.0);
-            let next = self.zoom_factor;
+            let prev = self.zoom;
+            self.zoom *= zoom_delta;
+            self.zoom = self.zoom.clamp(0.25, 8.0);
+            let next = self.zoom;
 
             let size = frame.size();
             let cursor = (cursor - frame.center()) * vec2(1.0, -1.0);
             self.offset += cursor / size * (size / prev - size / next);
 
-            if input.pointer.middle_down() {
+            if input.pointer.secondary_down() {
                 let delta = input.pointer.delta();
-                self.offset += delta * vec2(-1.0, 1.0) * self.zoom_factor.recip();
+                self.offset += delta * vec2(-1.0, 1.0) * self.zoom.recip();
             }
         }
     }
@@ -65,7 +93,7 @@ impl Grid {
         cursor: Option<Pos2>,
         shapes: &mut Vec<Shape>,
     ) {
-        let zoom = self.zoom_factor;
+        let zoom = self.zoom;
         let ppi = ui.ctx().pixels_per_point();
         let px = ppi.recip();
 
@@ -236,8 +264,8 @@ impl Grid {
             remap(center.y, y_frame, y_bound),
         );
 
-        let min = center + (bounds_min - center) / self.zoom_factor;
-        let max = center + (bounds_max - center) / self.zoom_factor;
+        let min = center + (bounds_min - center) / self.zoom;
+        let max = center + (bounds_max - center) / self.zoom;
 
         let delta_is_valid = (max.x - min.x) > 0.0 && (max.y - min.y) > 0.0;
 

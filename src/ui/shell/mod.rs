@@ -80,7 +80,7 @@ pub struct EguiOutput {
 #[derive(Clone)]
 pub struct EguiContext {
     ctx: HashMap<WindowId, egui::Context>,
-    user_textures: HashMap<HandleId, u64>,
+    user_textures: HashMap<Handle<Image>, u64>,
     last_texture_id: u64,
     mouse_position: Option<(WindowId, egui::Vec2)>,
 }
@@ -169,7 +169,7 @@ impl EguiContext {
     /// You'll want to pass a strong handle if a texture is used only in Egui and there's no
     /// handle copies stored anywhere else.
     pub fn add_image(&mut self, image: Handle<Image>) -> egui::TextureId {
-        let id = *self.user_textures.entry(image.id).or_insert_with(|| {
+        let id = *self.user_textures.entry(image.clone()).or_insert_with(|| {
             let id = self.last_texture_id;
             log::debug!("Add a new image (id: {}, handle: {:?})", id, image);
             self.last_texture_id += 1;
@@ -180,7 +180,7 @@ impl EguiContext {
 
     /// Removes the image handle and an Egui texture id associated with it.
     pub fn remove_image(&mut self, image: &Handle<Image>) -> Option<egui::TextureId> {
-        let id = self.user_textures.remove(&image.id);
+        let id = self.user_textures.remove(&image);
         log::debug!("Remove image (id: {:?}, handle: {:?})", id, image);
         id.map(egui::TextureId::User)
     }
@@ -189,7 +189,7 @@ impl EguiContext {
     #[must_use]
     pub fn image_id(&self, image: &Handle<Image>) -> Option<egui::TextureId> {
         self.user_textures
-            .get(&image.id)
+            .get(&image)
             .map(|&id| egui::TextureId::User(id))
     }
 }
