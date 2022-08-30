@@ -1,7 +1,7 @@
 use bevy::asset::HandleId;
 use bevy::prelude::*;
 use bevy::reflect::*;
-use egui::{DragValue, Ui, WidgetText};
+use egui::{Align, DragValue, Ui, WidgetText};
 use std::borrow::Cow;
 
 const WRAP_WIDTH: f32 = 235.0;
@@ -229,7 +229,7 @@ impl Builder {
             let indent = pad * self.level as f32;
             let _ = ui.allocate_space(egui::vec2(indent, height));
             let (id, space) = ui.allocate_space(egui::vec2(width * PERCENT - indent, height));
-            let layout = egui::Layout::left_to_right();
+            let layout = egui::Layout::left_to_right(Align::Center);
             let mut ui = ui.child_ui_with_id_source(space, layout, id);
             ui.label(label);
         };

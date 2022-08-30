@@ -12,9 +12,9 @@ arrayvec = "0.7"
 
 async-executor = "1.4"
 pollster = "0.2"
-egui = { version = "0.18.1", features = ["bytemuck"] }
-egui-winit = "0.18"
-winit = "0.26.1"
+egui = { version = "0.19.0", features = ["bytemuck"] }
+egui-winit = "0.19.0"
+winit = "0.27.2"
 webbrowser = "0.7.0"
 
 bytemuck = "1.9"

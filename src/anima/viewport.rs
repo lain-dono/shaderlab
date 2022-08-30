@@ -110,7 +110,7 @@ impl EditorTab for Animation2d {
             let size = vec2(220.0, 25.0);
             let mut mode_ui = ui.child_ui_with_id_source(
                 Align2::LEFT_TOP.align_size_within_rect(size, inner_frame),
-                Layout::left_to_right(),
+                Layout::left_to_right(Align::Center),
                 Id::new("animation2d::mode_select"),
             );
 

@@ -297,7 +297,7 @@ pub fn process_output(
             platform_output,
             shapes,
             textures_delta,
-            needs_repaint,
+            ..
         } = full_output;
 
         let render_output = render_output.entry(window_id).or_default();
@@ -321,10 +321,6 @@ pub fn process_output(
                     window.set_cursor_visibility(false);
                 }
             }
-        }
-
-        if needs_repaint {
-            event.send(RequestRedraw)
         }
 
         // TODO: see if we can support `new_tab`.
